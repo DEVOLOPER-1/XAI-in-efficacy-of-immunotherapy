@@ -1,4 +1,4 @@
-from scrapping.cbio_porta_downloader import run
+from scrapping.cbio_portal_downloader import run
 
 
 def main()->None:
