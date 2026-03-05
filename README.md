@@ -68,6 +68,11 @@ uv sync
 # Run your script
 python your_script.py
 ```
+```bash
+ruff check .           # see all lint violations
+ruff check --fix .     # auto-fix everything fixable
+ruff format .          # format all files
+```
 
 ---
 

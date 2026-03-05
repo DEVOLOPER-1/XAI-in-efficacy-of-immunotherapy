@@ -1,12 +1,11 @@
 [project]
 name = "dsai-305-xai"
 version = "0.1.0"
-description = "Add your description here"
+description = "Explainable AI — DSAI 305 course project"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4>=4.14.3",
-    "bravado>=12.0.1",
     "playwright>=1.58.0",
     "polars>=1.38.1",
     "tqdm>=4.67.3",
@@ -19,14 +18,71 @@ dev = [
 
 
 [tool.ruff]
-line-length = 100
-# Find and format code blocks in Markdown files
+line-length    = 100
+target-version = "py312"
 extend-include = ["*.md"]
 
+
 [tool.ruff.format]
-quote-style = "single"
-indent-style = "tab"
-docstring-code-format = true
+quote-style               = "single"
+indent-style              = "tab"
+docstring-code-format     = true
+skip-magic-trailing-comma = false
+preview = true
+
 
 [tool.ruff.lint]
-#pydocstyle = ""
+select = [
+    "E",
+#    "W",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "C4",
+    "SIM",
+    "TID",
+    "RUF",
+    "N",
+    "ANN",
+#    "D",
+]
+
+ignore = [
+    "D100",
+    "D104",
+    "D203",
+    "D213",
+#    "ANN101",
+#    "ANN102",
+]
+
+fixable   = ["ALL"]
+unfixable = []
+
+exclude = [
+    ".venv",
+    "__pycache__",
+    "downloads_valid",
+    "downloads_tmp",
+    "downloads_bad",
+    "logs",
+]
+
+
+[tool.ruff.lint.per-file-ignores]
+"main.py"     = ["D"]
+"scrapping/*" = ["ANN"]
+
+
+[tool.ruff.lint.isort]
+known-first-party       = ["scrapping"]
+split-on-trailing-comma = true
+
+
+[tool.ruff.lint.pep8-naming]
+classmethod-decorators = ["classmethod"]
+
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
