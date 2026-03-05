@@ -1,7 +1,7 @@
 from scrapping.cbio_porta_downloader import run
 
 
-def main():
+def main()->None:
 	print('Hello from dsai-305-xai!')
 
 

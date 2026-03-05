@@ -1,7 +1,7 @@
 import logging
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import polars as pl
@@ -159,7 +159,7 @@ def process_anchor(page: Page, anchor, index: int, total: int) -> dict:
 	Click a single download anchor, persist the file, validate it,
 	and return a structured report record.
 	"""
-	started_at = datetime.now(timezone.utc)
+	started_at = datetime.now(UTC)
 
 	if not anchor.is_visible():
 		log.warning('[%d/%d] Anchor not visible — skipping.', index, total)
@@ -171,7 +171,7 @@ def process_anchor(page: Page, anchor, index: int, total: int) -> dict:
 		with page.expect_download(timeout=DOWNLOAD_TIMEOUT) as dl_info:
 			anchor.click()
 		download = dl_info.value
-		finished_at = datetime.now(timezone.utc)
+		finished_at = datetime.now(UTC)
 
 		url = download.url
 		suggested = download.suggested_filename or ''
