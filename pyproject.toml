@@ -1,0 +1,32 @@
+[project]
+name = "dsai-305-xai"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "bravado>=12.0.1",
+    "playwright>=1.58.0",
+    "polars>=1.38.1",
+    "tqdm>=4.67.3",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.4",
+]
+
+
+[tool.ruff]
+line-length = 100
+# Find and format code blocks in Markdown files
+extend-include = ["*.md"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "tab"
+docstring-code-format = true
+
+[tool.ruff.lint]
+#pydocstyle = ""
