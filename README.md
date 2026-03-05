@@ -20,7 +20,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ### 1. Clone the repository
 ```bash
-git clone <repo-url>
+git clone [<repo-url>](https://github.com/DEVOLOPER-1/DSAI_305_XAI.git)
 cd DSAI_305_XAI
 ```
 
