@@ -1,0 +1,15 @@
+project_name: "WhiteBox - Explainable TMB Prediction"
+data:
+    raw_path: "data/raw/"
+    test_size: 0.2
+    random_state: 42
+model:
+    type: "CNN"
+    optimizer: "Adam"
+    learning_rate: 0.001
+    batch_size: 32
+    epochs: 50
+    architecture: "CNN_v1"
+wandb:
+    entity: "mohamed-mourad-zewail-city-of-science-and-technology"
+    project_name: "zerone-aic4-phase1"
