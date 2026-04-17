@@ -1,123 +1,88 @@
 [project]
-name = "ICMTC-AIC4-2026-Zerone"
+name = "dsai-305-xai"
 version = "0.1.0"
-description = "An Aerial Vision Challenge: Advancing real-time single-object tracking in dynamic drone-captured environments"
+description = "Explainable AI — DSAI 305 course project"
 readme = "README.md"
-requires-python = ">=3.13"
-authors = [
-    { name = "Team Zerone", email = "" }
-]
-keywords = ["single-object-tracking", "UAV", "aerial-vision", "real-time"]
-
-# ── CORE RUNTIME DEPENDENCIES ──────────────────────────────────────────────────
-
+requires-python = ">=3.12"
 dependencies = [
-    # Vision & numerics
-    "numpy>=1.26",
-    "opencv-python-headless>=4.9",   # headless = no Qt/X11 (Docker-safe)
-    "scipy>=1.13",                   # AUC integration, bbox utilities
-
-    # Config-driven architecture
-    "pyyaml>=6.0",
-    "cookiecutter>=2.6",             # Bootstrap new member folders
-
-    # Experiment tracking
-    "wandb>=0.17",
-
-    # Progress + logging
-    "tqdm>=4.66",
-    "rich>=13.7",                    # Pretty console tables for metric summaries
-
-    # Data handling
-    "pandas>=2.2",
-    "polars>=0.20",
-
-    # Needed
-    "kaggle>=1.6",
-    "ruff>=0.9.0",
-
+    "beautifulsoup4>=4.14.3",
+    "playwright>=1.58.0",
+    "polars>=1.38.1",
+    "tqdm>=4.67.3",
 ]
 
-# ── OPTIONAL DEPENDENCY GROUPS ─────────────────────────────────────────────────
-[project.optional-dependencies]
-
-# install via `uv pip install -e ".[dl]"`) when needed.
-# Deep-learning stack — uncomment torch above if you pull this in
-dl = [
-    "torch>=2.3.0",
-    "torchvision>=0.18.0",
-    "timm>=1.0",                     # Backbone zoo (ViT, MobileNet, EfficientViT…)
-    "einops>=0.8",                   # Expressive tensor ops for attention models
-]
-
-# FLOPs / latency profiling — requires the dl group to be installed first
-profiling = [
-    "thop>=0.1.1",                   # torch-op-counter
-    "fvcore>=0.1.5",                 # Facebook's FLOP counter (more accurate for some archs)
-]
-
-# Developer tooling — one-time install, not needed on every machine
+[dependency-groups]
 dev = [
-    "pre-commit>=3.7",
-    "ipykernel>=6.29",
-    "jupyter>=1.0",
+    "ruff>=0.15.4",
 ]
 
 
-# ── ENTRY POINTS ───────────────────────────────────────────────────────────────
-[project.scripts]
-train-tracker = "src.train:main"
-eval-tracker  = "src.inference:main"
-submit        = "src.scripts.submit:main"
-
-[project.urls]
-Repository = "https://github.com/zerone-team/aic4-tracker"
-
-# ── RUFF CONFIGURATION ─────────────────────────────────────────────────────────
 [tool.ruff]
-line-length    = 88
-target-version = "py313"
-exclude = [
-    ".git",
-    ".venv",
-    "__pycache__",
-    "data",
-    # "members",    # uncomment to also ignore member notebooks
-]
+line-length    = 100
+target-version = "py312"
+extend-include = ["*.md"]
+
+
+[tool.ruff.format]
+quote-style               = "single"
+indent-style              = "tab"
+docstring-code-format     = true
+skip-magic-trailing-comma = false
+preview = true
+
 
 [tool.ruff.lint]
 select = [
     "E",
-    "W",
+#    "W",
     "F",
     "I",
+    "UP",
     "B",
     "C4",
-    "UP",
     "SIM",
+    "TID",
     "RUF",
     "N",
-    "PTH",
-    "TRY",
-    "ERA",
+    "ANN",
+#    "D",
 ]
+
 ignore = [
-    "E501",
-    "TRY003",
-    "ERA001",
-    "N806",
-    "N812",
+    "D100",
+    "D104",
+    "D203",
+    "D213",
+#    "ANN101",
+#    "ANN102",
 ]
+
+fixable   = ["ALL"]
+unfixable = []
+
+exclude = [
+    ".venv",
+    "__pycache__",
+    "downloads_valid",
+    "downloads_tmp",
+    "downloads_bad",
+    "logs",
+]
+
 
 [tool.ruff.lint.per-file-ignores]
-"members/**"    = ["E402", "F401", "ERA001", "B018"]  # exploratory notebooks
-"src/models/**" = ["N806"]                             # tensor dim names
-"tests/**"      = ["S101"]                             # assert is fine in tests
+"main.py"     = ["D"]
+"scrapping/*" = ["ANN"]
+
 
 [tool.ruff.lint.isort]
-known-first-party         = ["src"]
-force-sort-within-sections = true
+known-first-party       = ["scrapping"]
+split-on-trailing-comma = true
 
-[tool.ruff.format]
-quote-style  = "double"
-indent-style = "space"
+
+[tool.ruff.lint.pep8-naming]
+classmethod-decorators = ["classmethod"]
+
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
