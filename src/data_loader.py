@@ -137,7 +137,7 @@ class TabularStore:
 
         # Separate target from features
         if target_col in raw.columns:
-            self._targets: pd.Series = raw.pop(target_col).astype(float)
+            self._targets: pd.Series = np.log1p(raw.pop(target_col)+1).astype(float)
         else:
             log.warning(
                 "Target column '%s' not found in CSV — targets will be None for all patients.",

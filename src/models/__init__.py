@@ -121,7 +121,9 @@ def _load_gradient_boosted(cfg: DotDict) -> Any:
     from src.models.tabular import GradientBoostedTrees  # type: ignore[import]
     return GradientBoostedTrees(cfg)
 
-
+def _load_lasso_regressor(cfg: DotDict) -> Any:
+    from src.models.tabular import LassoRegressor
+    return LassoRegressor(cfg)
 # ── Image ──────────────────────────────────────────────────────────────────
 
 def _load_resnet(cfg: DotDict) -> Any:
@@ -206,6 +208,8 @@ def _load_late_fusion(cfg: DotDict) -> Any:
 # ---------------------------------------------------------------------------
 
 _TABULAR_REGISTRY: dict[str, Any] = {
+    # -- Linear models --------------------------------------------------
+    "lasso_regressor": _load_lasso_regressor,
     # ── Tree models (scikit-learn) ─────────────────────────────────────
     "decision_tree":    _load_decision_tree,    # single tree — reference implementation
     "random_forest":    _load_random_forest,    # bagged ensemble

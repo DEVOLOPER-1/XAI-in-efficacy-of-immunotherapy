@@ -76,7 +76,7 @@ def _init_wandb(cfg: DotDict) -> Any:
 
 def _is_tree_model(cfg: DotDict) -> bool:
     """Return True for tree-based models that use fit() instead of forward()."""
-    tree_types = {"xgboost", "catboost", "decision_tree","random_forest"}
+    tree_types = {"xgboost", "catboost", "decision_tree","random_forest", "lasso_regressor"}
     model_cfg  = cfg.get("model") or DotDict({})
     return (model_cfg.get("type") or "").lower() in tree_types
 
