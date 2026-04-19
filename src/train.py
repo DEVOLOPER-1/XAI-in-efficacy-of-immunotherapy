@@ -1,32 +1,35 @@
 """
-src/train.py — Universal training loop for AIC-4 Zerone.
+src/train.py — Multimodal Cancer Research training loop for WhiteBox.
 
 Responsibilities:
-  - Accept a merged DotDict config (from src.config.load_config).
-  - Instantiate the model via the registry (src.models.get_model).
-  - Run training epochs; log to W&B **only** at validation steps and
-    the final summary (not every epoch) to minimise bandwidth.
-  - After training, measure efficiency metrics (CPU latency, FLOPs,
-    params, model size) and compute the full scoring breakdown.
-  - Save the best checkpoint and log its path to W&B.
+  - Instantiate model via the registry (src.models.get_model).
+  - Run training epochs over batched PatientSample dicts from data_loader.
+  - Handle mixed inputs:  outputs = model(batch["image"], batch["tabular"])
+  - Support tree-based models (XGBoost / CatBoost) that use fit() rather
+    than gradient-descent epochs.
+  - Log to W&B: config once at init; medical metrics at validation steps;
+    final summary at end.
+  - Save the best checkpoint based on validation RMSE.
 
-W&B logging strategy (bandwidth-conscious):
-  - Hyperparameters → wandb.config  (once, at run init)
-  - Validation metrics → wandb.log  (every `cfg.training.val_every` epochs)
-  - Efficiency metrics → wandb.log  (once, in the final summary)
-  - run.summary        → final best values for the leaderboard
+Hardware efficiency metrics (latency, FLOPs, model size) are NOT computed
+here — they are irrelevant to the cancer research task.
 
-Usage (called from main.py, not directly):
+W&B logging strategy (bandwidth-conscious, per STANDARDS):
+  - Hyperparameters → wandb.config   (once, at run init)
+  - Validation metrics → wandb.log   (every cfg.training.val_every epochs)
+  - Final summary → run.summary      (best values for leaderboard table)
+
+Usage (called from main.py):
     from src.config import load_config
     from src.train import train
-    cfg = load_config("configs/experiments/siamfc_mobile.yaml")
+    cfg = load_config("configs/experiments/fusion_early.yaml")
     train(cfg)
 """
 
 from __future__ import annotations
 
 import logging
-import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,29 +37,17 @@ import numpy as np
 
 from src.config import DotDict
 from src.models import get_model
-from src.utils import (
-    compute_all_scores,
-    measure_cpu_latency,
-    measure_flops,
-    measure_model_size,
-    measure_params,
-)
+from src.utils import compute_all_metrics, save_checkpoint
 
 log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# W&B initialisation helper
+# W&B initialisation (unchanged from original standards)
 # ---------------------------------------------------------------------------
 
 def _init_wandb(cfg: DotDict) -> Any:
-    """Initialise a W&B run and return the run object.
-
-    Logs the full merged config as hyperparameters so every run is
-    fully reproducible from its W&B page.
-
-    Returns None if W&B is not installed (graceful degradation).
-    """
+    """Initialise W&B run and log the full merged config as hyperparameters."""
     try:
         import wandb  # type: ignore[import]
     except ImportError:
@@ -67,46 +58,31 @@ def _init_wandb(cfg: DotDict) -> Any:
         return None
 
     wandb_cfg = cfg.get("wandb") or DotDict({})
-
     run = wandb.init(
-        project=wandb_cfg.get("project", "aic4-zerone"),
-        entity=wandb_cfg.get("entity", None),    # None = personal account
-        name=wandb_cfg.get("run_name", None),    # None = auto-generated
-        tags=wandb_cfg.get("tags", []),
-        config=cfg.to_dict(),                    # full merged config as hparams
-        # Do NOT set `log_code=True` here — notebook outputs are stripped before
-        # committing (STANDARDS §1), so code logging would capture nothing useful.
+        project=wandb_cfg.get("project", "TMB-prediction"),
+        entity=wandb_cfg.get("entity",   "mohamed-mourad-zewail-city"),
+        name=wandb_cfg.get("run_name",
+                           f"{datetime.now()}-{cfg.model.type}"),
+        tags=wandb_cfg.get("tags",       []),
+        config=cfg.to_dict(),   # full merged config as hyperparameters — reproducible
     )
-
     log.info("W&B run initialised: %s", run.url)
     return run
 
 
 # ---------------------------------------------------------------------------
-# Checkpoint helpers
+# Backend detection helper
 # ---------------------------------------------------------------------------
 
-def _save_checkpoint(model: Any, path: Path) -> None:
-    """Save model weights. Handles both torch and classical-CV models."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        import torch  # type: ignore[import]
-        if hasattr(model, "state_dict"):
-            torch.save(model.state_dict(), path)
-            log.info("Checkpoint saved → %s", path)
-            return
-    except ImportError:
-        pass
-
-    # For classical-CV models, use pickle as a fallback.
-    import pickle
-    with open(path, "wb") as fh:
-        pickle.dump(model, fh)
-    log.info("Checkpoint (pickle) saved → %s", path)
+def _is_tree_model(cfg: DotDict) -> bool:
+    """Return True for tree-based models that use fit() instead of forward()."""
+    tree_types = {"xgboost", "catboost", "decision_tree","random_forest"}
+    model_cfg  = cfg.get("model") or DotDict({})
+    return (model_cfg.get("type") or "").lower() in tree_types
 
 
 # ---------------------------------------------------------------------------
-# Main training function
+# Main training entry point
 # ---------------------------------------------------------------------------
 
 def train(cfg: DotDict) -> dict[str, float]:
@@ -116,210 +92,240 @@ def train(cfg: DotDict) -> dict[str, float]:
         cfg: Merged experiment config (DotDict from load_config).
 
     Returns:
-        Dict of final scores (auc, norm_prec, s_acc, s_eff, final_score, …).
-        These are the values you copy into logs/leaderboard.csv.
+        Dict of best validation metrics: rmse, mae, r2, pearson_r, c_index.
+        Copy these values into logs/leaderboard.csv.
     """
-    # ── 1. Initialise W&B ─────────────────────────────────────────────────
+    # ── 1. W&B ───────────────────────────────────────────────────────────────
     run = _init_wandb(cfg)
 
-    # ── 2. Instantiate model ───────────────────────────────────────────────
-    log.info("Building model: type=%s", cfg.model.type)
-    tracker = get_model(cfg)
+    # ── 2. Model ─────────────────────────────────────────────────────────────
+    model_cfg = cfg.get("model") or DotDict({})
+    log.info(
+        "Building model — category: %s | type: %s",
+        model_cfg.get("category", "?"),
+        model_cfg.get("type",     "?"),
+    )
+    model = get_model(cfg)
 
-    # ── 3. Load data ───────────────────────────────────────────────────────
-    # Data loading is delegated to src.data_loader to keep this file focused.
-    # We import lazily so missing optional deps don't break the import chain.
-    from src.data_loader import build_dataloaders  # type: ignore[import]
-
+    # ── 3. Data ───────────────────────────────────────────────────────────────
+    from src.data_loader import build_dataloaders
     train_loader, val_loader = build_dataloaders(cfg)
     log.info(
-        "Data loaded — train sequences: %d, val sequences: %d",
-        len(train_loader),
-        len(val_loader),
+        "Data ready — train: %d batches | val: %d batches",
+        len(train_loader), len(val_loader),
     )
 
-    # ── 4. Training loop ───────────────────────────────────────────────────
-    training_cfg  = cfg.get("training") or DotDict({})
-    num_epochs    = training_cfg.get("epochs", 50)
-    val_every     = training_cfg.get("val_every", 5)    # log to W&B every N epochs
-    save_dir      = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
-    experiment_id = cfg.get("experiment_name") or cfg.model.type
+    # ── 4. Dispatch to correct training regime ───────────────────────────────
+    if _is_tree_model(cfg):
+        best_metrics = _train_tree(model, train_loader, val_loader, cfg, run)
+    else:
+        best_metrics = _train_neural(model, train_loader, val_loader, cfg, run)
 
-    best_final_score: float = -1.0
-    best_metrics:     dict[str, float] = {}
-
-    log.info(
-        "Starting training — epochs: %d, val_every: %d",
-        num_epochs,
-        val_every,
-    )
-
-    for epoch in range(1, num_epochs + 1):
-
-        # -- 4a. Train one epoch --------------------------------------------
-        _train_epoch(tracker, train_loader, cfg, epoch)
-
-        # -- 4b. Validate (and log) at specified intervals -----------------
-        if epoch % val_every == 0 or epoch == num_epochs:
-            val_metrics = _validate(tracker, val_loader, cfg)
-
-            log.info(
-                "Epoch %d/%d — AUC: %.4f | NormPrec: %.4f | S_acc: %.4f",
-                epoch, num_epochs,
-                val_metrics["auc"],
-                val_metrics["norm_prec"],
-                val_metrics["s_acc"],
-            )
-
-            # Log accuracy metrics to W&B (but NOT efficiency — measured once later)
-            if run is not None:
-                import wandb  # type: ignore[import]
-                wandb.log(
-                    {
-                        "epoch":     epoch,
-                        "val/auc":        val_metrics["auc"],
-                        "val/norm_prec":  val_metrics["norm_prec"],
-                        "val/s_acc":      val_metrics["s_acc"],
-                    },
-                    step=epoch,
-                )
-
-            # Track best checkpoint
-            if val_metrics["s_acc"] > best_final_score:
-                best_final_score = val_metrics["s_acc"]
-                best_metrics = val_metrics
-                ckpt_path = save_dir / f"{experiment_id}_best.pth"
-                _save_checkpoint(tracker, ckpt_path)
-
-    # ── 5. Measure efficiency (post-training, CPU-only) ───────────────────
-    log.info("Measuring efficiency metrics on CPU…")
-
-    # Get a representative frame from the validation set for latency timing
-    sample_frame = _get_sample_frame(val_loader)
-
-    latency_ms = measure_cpu_latency(tracker, sample_frame)
-    flops_g    = measure_flops(getattr(tracker, "model", tracker))
-    params_m   = measure_params(getattr(tracker, "model", tracker))
-    size_gb    = measure_model_size(save_dir / f"{experiment_id}_best.pth")
-
-    log.info(
-        "Efficiency — Latency: %.1f ms | FLOPs: %.2f G | Params: %.2f M | Size: %.3f GB",
-        latency_ms, flops_g, params_m, size_gb,
-    )
-
-    # ── 6. Compute final scores ────────────────────────────────────────────
-    final_scores = compute_all_scores(
-        auc        = best_metrics.get("auc", 0.0),
-        norm_prec  = best_metrics.get("norm_prec", 0.0),
-        flops_g    = flops_g,
-        params_m   = params_m,
-        latency_ms = latency_ms,
-        size_gb    = size_gb,
-    )
-
-    log.info(
-        "Final Score: %.4f (S_acc=%.4f, S_eff=%.4f)",
-        final_scores["final_score"],
-        final_scores["s_acc"],
-        final_scores["s_eff"],
-    )
-
-    # ── 7. Log final summary to W&B ────────────────────────────────────────
+    # ── 5. Final W&B summary ─────────────────────────────────────────────────
     if run is not None:
-        import wandb  # type: ignore[import]
-
-        # Log all efficiency + final metrics in one call
-        wandb.log(
-            {
-                "efficiency/latency_ms": latency_ms,
-                "efficiency/flops_g":    flops_g,
-                "efficiency/params_m":   params_m,
-                "efficiency/size_gb":    size_gb,
-                "efficiency/s_eff":      final_scores["s_eff"],
-                "final/s_acc":           final_scores["s_acc"],
-                "final/final_score":     final_scores["final_score"],
-                "checkpoint":            str(save_dir / f"{experiment_id}_best.pth"),
-            }
-        )
-
-        # Also write to run.summary for the W&B leaderboard table
-        run.summary.update(
-            {k: v for k, v in final_scores.items()}
-        )
-
+        run.summary.update(best_metrics)
         run.finish()
         log.info("W&B run finished.")
 
-    return final_scores
+    return best_metrics
 
 
 # ---------------------------------------------------------------------------
-# Epoch-level helpers (stubs — real logic lives in data_loader / model)
+# Neural network training (PyTorch gradient descent)
 # ---------------------------------------------------------------------------
 
-def _train_epoch(
-    tracker: Any,
+def _train_neural(
+    model:        Any,
     train_loader: Any,
-    cfg: DotDict,
-    epoch: int,
-) -> None:
-    """Train for one epoch.
-
-    The actual gradient update logic lives in the tracker / model class
-    (e.g. SiamFCTracker.train_step). This function is the per-epoch driver.
-    Classical trackers (CSRT, KCF) are online-only and have no training loop;
-    for them this is a no-op.
-    """
-    if not hasattr(tracker, "train_step"):
-        return  # Classical tracker — no training phase
-
-    tracker.train()  # Switch to train mode if torch model
-    for batch in train_loader:
-        frames, bboxes = batch
-        tracker.train_step(frames, bboxes, cfg)
-
-
-def _validate(
-    tracker: Any,
-    val_loader: Any,
-    cfg: DotDict,
+    val_loader:   Any,
+    cfg:          DotDict,
+    run:          Any,
 ) -> dict[str, float]:
-    """Run one pass of validation and return accuracy metrics.
+    """Train a PyTorch model with AdamW and MSE loss."""
+    import torch
+    import torch.nn as nn
 
-    Returns a dict with keys: auc, norm_prec, s_acc.
-    """
-    from src.utils import success_auc, norm_precision, compute_s_acc  # local import avoids circular
+    training_cfg  = cfg.get("training") or DotDict({})
+    num_epochs    = training_cfg.get("epochs",       100)
+    val_every     = training_cfg.get("val_every",      5)
+    lr            = training_cfg.get("lr",           1e-3)
+    weight_decay  = training_cfg.get("weight_decay", 1e-4)
+    save_dir      = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
+    experiment_id = cfg.get("experiment_name") or "experiment"
+    threshold     = training_cfg.get("risk_threshold", None)
 
-    all_preds: list[tuple[float, float, float, float]] = []
-    all_gts:   list[tuple[float, float, float, float]] = []
+    optimiser = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=lr, weight_decay=weight_decay,
+    )
+    criterion = nn.MSELoss()
 
-    eval_mode = hasattr(tracker, "eval")
-    if eval_mode:
-        tracker.eval()
+    best_rmse:     float             = float("inf")
+    best_metrics:  dict[str, float]  = {}
+    ckpt_path = save_dir / f"{experiment_id}_best.pth"
 
-    for sequence in val_loader:
-        frames, gts = sequence
-        # Initialise on frame 0
-        tracker.init(frames[0], gts[0])
-        for frame, gt in zip(frames[1:], gts[1:]):
-            pred = tracker.update(frame)
-            all_preds.append(pred)
-            all_gts.append(gt)
+    log.info("Neural training — epochs: %d | val_every: %d | lr: %g", num_epochs, val_every, lr)
 
-    auc       = success_auc(all_preds, all_gts)
-    norm_prec = norm_precision(all_preds, all_gts)
-    s_acc     = compute_s_acc(auc, norm_prec)
+    for epoch in range(1, num_epochs + 1):
 
-    return {"auc": auc, "norm_prec": norm_prec, "s_acc": s_acc}
+        # -- Train one epoch -------------------------------------------------
+        model.train()
+        epoch_losses: list[float] = []
+
+        for batch in train_loader:
+            image   = _to_tensor(batch["image"])
+            tabular = _to_tensor(batch["tabular"])
+            target  = _to_tensor(batch["target"])
+
+            # Skip batches where every target is NaN (test/unlabelled patients)
+            valid   = ~torch.isnan(target)
+            if valid.sum() == 0:
+                continue
+
+            optimiser.zero_grad()
+            # Mixed-input forward pass: model handles None modalities internally
+            preds = model(image, tabular).squeeze(-1)          # (B,)
+            loss  = criterion(preds[valid], target[valid])
+            loss.backward()
+            optimiser.step()
+            epoch_losses.append(loss.item())
+
+        mean_loss = np.mean(epoch_losses) if epoch_losses else float("nan")
+
+        # -- Validate (and log) at configured intervals ----------------------
+        if epoch % val_every == 0 or epoch == num_epochs:
+            metrics = _neural_validate(model, val_loader, threshold=threshold)
+
+            log.info(
+                "Epoch %d/%d — train_loss: %.4f | RMSE: %.4f | R²: %.4f | C-Index: %.4f",
+                epoch, num_epochs, mean_loss,
+                metrics["rmse"], metrics["r2"], metrics["c_index"],
+            )
+
+            # Log to W&B only at validation steps (bandwidth-conscious)
+            if run is not None:
+                import wandb
+                wandb.log(
+                    {"epoch": epoch, "train/loss": mean_loss,
+                     **{f"val/{k}": v for k, v in metrics.items()}},
+                    step=epoch,
+                )
+
+            if metrics["rmse"] < best_rmse:
+                best_rmse    = metrics["rmse"]
+                best_metrics = metrics
+                save_checkpoint(model, ckpt_path)
+                log.info("  ↳ New best RMSE=%.4f — checkpoint saved.", best_rmse)
+
+    return best_metrics
 
 
-def _get_sample_frame(val_loader: Any) -> "np.ndarray":
-    """Return a single representative frame for latency benchmarking."""
-    import numpy as np
+def _neural_validate(
+    model:     Any,
+    loader:    Any,
+    threshold: float | None = None,
+) -> dict[str, float]:
+    """Validate a neural model and return all medical metrics."""
+    import torch
+
+    model.eval()
+    all_preds:   list[float] = []
+    all_targets: list[float] = []
+
+    with torch.no_grad():
+        for batch in loader:
+            image   = _to_tensor(batch["image"])
+            tabular = _to_tensor(batch["tabular"])
+            targets = batch["target"]   # numpy (B,), may contain NaN
+
+            preds = model(image, tabular).squeeze(-1).cpu().numpy()
+
+            for p, t in zip(preds, targets):
+                if not np.isnan(t):
+                    all_preds.append(float(p))
+                    all_targets.append(float(t))
+
+    return compute_all_metrics(all_targets, all_preds, threshold=threshold)
+
+
+def _to_tensor(array: "np.ndarray | None") -> "Any":
+    """Convert numpy array to float32 torch tensor. Pass-through for None."""
+    if array is None:
+        return None
     try:
-        sequence = next(iter(val_loader))
-        frames, _ = sequence
-        return frames[0]
-    except Exception:
-        # Graceful fallback: black 480×640 frame
-        return np.zeros((480, 640, 3), dtype=np.uint8)
+        import torch
+        return torch.from_numpy(array).float()
+    except ImportError:
+        return array
+
+
+# ---------------------------------------------------------------------------
+# Tree-based model training (XGBoost / CatBoost)
+# ---------------------------------------------------------------------------
+
+def _train_tree(
+    model:        Any,
+    train_loader: Any,
+    val_loader:   Any,
+    cfg:          DotDict,
+    run:          Any,
+) -> dict[str, float]:
+    """Accumulate all tabular batches and call model.fit() in one shot.
+
+    Tree models do not iterate epochs — the loader is drained once into
+    a single (N, F) matrix.
+    """
+    log.info("Tree model training — collecting batches…")
+
+    X_train, y_train = _collect_tabular(train_loader)
+    X_val,   y_val   = _collect_tabular(val_loader)
+
+    if X_train is None or y_train is None:
+        raise RuntimeError(
+            "No tabular data found for tree model. "
+            "Verify cfg.modalities.tabular: true and that clinical.csv exists."
+        )
+
+    log.info("Fitting tree model on %d training patients…", len(y_train))
+    model.fit(X_train, y_train)
+
+    preds   = model.predict(X_val)
+    metrics = compute_all_metrics(y_val.tolist(), preds.tolist())
+
+    log.info(
+        "Tree model — RMSE: %.4f | R²: %.4f | C-Index: %.4f",
+        metrics["rmse"], metrics["r2"], metrics["c_index"],
+    )
+
+    if run is not None:
+        import wandb
+        wandb.log({f"val/{k}": v for k, v in metrics.items()})
+
+    # Save checkpoint
+    training_cfg  = cfg.get("training") or DotDict({})
+    save_dir      = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
+    experiment_id = cfg.get("experiment_name") or "experiment"
+    save_checkpoint(model, save_dir / f"{experiment_id}_best.pkl")
+
+    return metrics
+
+
+def _collect_tabular(
+    loader: Any,
+) -> tuple["np.ndarray | None", "np.ndarray | None"]:
+    """Drain a batch loader and stack all tabular arrays + targets."""
+    X_parts: list[np.ndarray] = []
+    y_parts: list[float]      = []
+
+    for batch in loader:
+        if batch["tabular"] is None:
+            continue
+        X_parts.append(batch["tabular"])
+        for t in batch["target"]:
+            # Use 0.0 for NaN targets — tree models need no NaN in y
+            y_parts.append(float(t) if not np.isnan(t) else 0.0)
+
+    if not X_parts:
+        return None, None
+
+    return np.concatenate(X_parts, axis=0), np.array(y_parts, dtype=np.float32)
