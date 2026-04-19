@@ -212,4 +212,6 @@ __marimo__/
 
 # wandb
 wandb/
-*.pkl
+freezed-models/
+configs/experiments/
+src/models/
