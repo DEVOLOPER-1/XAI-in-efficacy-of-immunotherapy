@@ -7,7 +7,7 @@ Design:
   3. Return a DotDict so callers can write cfg.model.type instead of cfg["model"]["type"].
 
 Usage:
-    cfg = load_config("configs/experiments/siamfc_mobile.yaml")
+    cfg = load_config("configs/experiments/random_forest.yaml")
     print(cfg.model.type)          # "siamfc"
     print(cfg.training.lr)         # 0.001
     print(cfg.dataset.train_root)  # "data/train"
@@ -119,7 +119,7 @@ def load_config(experiment_path: str | Path) -> DotDict:
 
     Args:
         experiment_path: Path to the experiment YAML, e.g.
-                         "configs/experiments/siamfc_mobile.yaml".
+                         "configs/experiments/random_forest.yaml".
 
     Returns:
         A DotDict that is the result of deep-merging the base config with

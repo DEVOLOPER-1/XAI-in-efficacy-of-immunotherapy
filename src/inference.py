@@ -16,7 +16,7 @@ Usage (called from main.py, not directly):
     from src.config import load_config
     from src.inference import evaluate, predict
 
-    cfg = load_config("configs/experiments/siamfc_mobile.yaml")
+    cfg = load_config("configs/experiments/random_forest.yaml")
     metrics = evaluate(cfg, split="val")
     predict(cfg, split="public_lb", output_path="submission.csv")
 """

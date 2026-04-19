@@ -120,7 +120,7 @@ class TabularStore:
                 "Check cfg.dataset.tabular_file and cfg.dataset.data_root."
             )
 
-        if file_path.suffix != ".csv":
+        if file_path.suffix == ".csv":
             raw = pd.read_csv(file_path)
         elif file_path.suffix == ".parquet":
             raw = pd.read_parquet(file_path)

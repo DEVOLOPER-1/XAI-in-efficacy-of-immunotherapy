@@ -74,13 +74,13 @@ class CancerModelProtocol(Protocol):
 
 # ── Tabular ────────────────────────────────────────────────────────────────
 
-def _load_dicision_tree(cfg: DotDict) -> Any:
+def _load_xgboost(cfg: DotDict) -> Any:
     try:
-        from src.models.tabular import DecisionTreeRegressor  # type: ignore[import]
-        return DecisionTreeRegressor(cfg)
+        from src.models.tabular import XGBoostRegressor  # type: ignore[import]
+        return XGBoostRegressor(cfg)
     except ImportError as exc:
         raise ImportError(
-            "Decision Tree model requires: uv add scikit-learn"
+            "XGBoost model requires: uv pip install xgboost"
         ) from exc
 
 
@@ -102,6 +102,24 @@ def _load_tabular_mlp(cfg: DotDict) -> Any:
         raise ImportError(
             "TabularMLP requires PyTorch: uv pip install torch"
         ) from exc
+
+
+def _load_decision_tree(cfg: DotDict) -> Any:
+    """Single decision tree — interpretable baseline. No extra deps beyond scikit-learn."""
+    from src.models.tabular import DecisionTreeRegressor  # type: ignore[import]
+    return DecisionTreeRegressor(cfg)
+
+
+def _load_random_forest(cfg: DotDict) -> Any:
+    """Bagged ensemble of decision trees via scikit-learn."""
+    from src.models.tabular import RandomForestRegressor  # type: ignore[import]
+    return RandomForestRegressor(cfg)
+
+
+def _load_gradient_boosted(cfg: DotDict) -> Any:
+    """Histogram-based gradient boosted trees via scikit-learn (handles NaN natively)."""
+    from src.models.tabular import GradientBoostedTrees  # type: ignore[import]
+    return GradientBoostedTrees(cfg)
 
 
 # ── Image ──────────────────────────────────────────────────────────────────
@@ -188,9 +206,15 @@ def _load_late_fusion(cfg: DotDict) -> Any:
 # ---------------------------------------------------------------------------
 
 _TABULAR_REGISTRY: dict[str, Any] = {
-    "decision_tree":     _load_dicision_tree,
-    "catboost":    _load_catboost,
-    "tabular_mlp": _load_tabular_mlp,
+    # ── Tree models (scikit-learn) ─────────────────────────────────────
+    "decision_tree":    _load_decision_tree,    # single tree — reference implementation
+    "random_forest":    _load_random_forest,    # bagged ensemble
+    "gradient_boosted": _load_gradient_boosted, # histogram GBT, handles NaN
+    # ── Boosting libraries ─────────────────────────────────────────────
+    "xgboost":          _load_xgboost,
+    "catboost":         _load_catboost,
+    # ── Neural ────────────────────────────────────────────────────────
+    "tabular_mlp":      _load_tabular_mlp,
 }
 
 _IMAGE_REGISTRY: dict[str, Any] = {
@@ -244,7 +268,7 @@ def get_model(cfg: DotDict) -> CancerModelProtocol:
 
         model:
           category: tabular_only
-          type: decision_tree
+          type: xgboost
 
         model:
           category: image_only

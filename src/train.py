@@ -63,7 +63,7 @@ def _init_wandb(cfg: DotDict) -> Any:
         entity=wandb_cfg.get("entity",   "mohamed-mourad-zewail-city"),
         name=wandb_cfg.get("run_name",
                            f"{datetime.now()}-{cfg.model.type}"),
-        tags=wandb_cfg.get("tags",       []),
+        tags=wandb_cfg.get("tags",       []) + ["success",],
         config=cfg.to_dict(),   # full merged config as hyperparameters — reproducible
     )
     log.info("W&B run initialised: %s", run.url)
@@ -297,15 +297,20 @@ def _train_tree(
         metrics["rmse"], metrics["r2"], metrics["c_index"],
     )
 
+    model.print_feature_importances(top_n= cfg.model.select_top_k)
+
     if run is not None:
         import wandb
         wandb.log({f"val/{k}": v for k, v in metrics.items()})
 
-    # Save checkpoint
-    training_cfg  = cfg.get("training") or DotDict({})
-    save_dir      = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
-    experiment_id = cfg.get("experiment_name") or "experiment"
-    save_checkpoint(model, save_dir / f"{experiment_id}_best.pkl")
+        # Save checkpoint
+        training_cfg  = cfg.get("training") or DotDict({})
+        save_dir      = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
+        run_name = cfg.wandb.get("run_name") or "experiment"
+        save_checkpoint(model, save_dir / f"{run_name}_weights.pkl")
+
+        wandb.log_artifact(save_dir / f"{run_name}_weights.pkl", type="model")
+
 
     return metrics
 

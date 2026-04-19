@@ -318,17 +318,17 @@ W&B will log your run automatically. Your run ID will appear in the terminal.
 
 ### 8.5 Evaluate on validation split
 ```bash
-python main.py --config configs/experiments/siamfc_mobile.yaml --mode eval
+python main.py --config configs/experiments/random_forest.yaml --mode eval
 ```
 ### 8.6 Generate Kaggle submission CSV from public-LB sequences
 ```bash
-python main.py --config configs/experiments/siamfc_mobile.yaml --mode predict --output submission.csv
+python main.py --config configs/experiments/random_forest.yaml --mode predict --output submission.csv
 ```
 This generates a CSV in the format required by Kaggle.
 
 ### 8.7 Quick check — print the resolved config and registered models, then exit
 ```bash
-python main.py --config configs/experiments/siamfc_mobile.yaml --mode info
+python main.py --config configs/experiments/random_forest.yaml --mode info
 ```
 
 
