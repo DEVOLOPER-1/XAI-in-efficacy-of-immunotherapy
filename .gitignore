@@ -209,3 +209,6 @@ __marimo__/
 /downloads_tmp/
 /downloads_valid/
 /logs/
+
+# wandb
+wandb/
