@@ -280,9 +280,10 @@ def compute_all_metrics(
     }
 
     if threshold is not None:
-        binary_true = [1 if t >= threshold else 0 for t in y_true]
-        metrics["auroc"] = auroc(binary_true, y_pred)
-        metrics["auprc"] = auprc(binary_true, y_pred)
+        yt, yp = _clean_pairs(y_true, y_pred)
+        binary_true = [1 if t >= threshold else 0 for t in yt]
+        metrics["auroc"] = auroc(binary_true, yp)
+        metrics["auprc"] = auprc(binary_true, yp)
 
     return metrics
 

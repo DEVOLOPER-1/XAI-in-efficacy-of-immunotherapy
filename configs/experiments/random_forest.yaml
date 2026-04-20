@@ -42,7 +42,7 @@ model:
 # ── Dataset ─────────────────────────────────────────────────────────────────
 dataset:
   data_root:       data/processed
-  tabular_file:    stad_clinical_patient_full.parquet
+  tabular_file:    stad_clinical_patient.parquet   # local artifact: generate with data/processing scripts
   target_col:      TMB   # regression target column
 
   val_ratio:    0.2    # 15% of patients held out for validation

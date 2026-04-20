@@ -423,23 +423,30 @@ class LassoRegressor(_TabularBase):
 
         model_cfg = cfg.get("model") or DotDict({})
 
+        alpha        = model_cfg.get("alpha",        1.0)
+        max_iter     = model_cfg.get("max_iter",     1000)
+        selection    = model_cfg.get("selection",    "cyclic")
+        tol          = model_cfg.get("tol",          1e-4)
+        random_state = model_cfg.get("random_state", 42)
 
         log.info(
-            "DecisionTree config — %s",
-            model_cfg
+            "LassoRegressor config — alpha=%s | max_iter=%s | selection=%s | tol=%s | random_state=%s",
+            alpha,
+            max_iter,
+            selection,
+            tol,
+            random_state,
         )
-
 
         return Pipeline([
             ("power", PowerTransformer(standardize=False)),  # e.g. Yeo-Johnson by default
             ("scaler", RobustScaler()),
             ("lasso", Lasso(
-                alpha=model_cfg.get("alpha"),
-                max_iter=model_cfg.get("max_iter"),
-                selection=model_cfg.get("selection"),
-                tol=model_cfg.get("tol"),
-
-                random_state=model_cfg.get("random_state")
+                alpha=alpha,
+                max_iter=max_iter,
+                selection=selection,
+                tol=tol,
+                random_state=random_state,
             ))
         ])
 

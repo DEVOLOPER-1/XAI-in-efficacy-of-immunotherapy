@@ -23,6 +23,9 @@ model:
 # ── Dataset ─────────────────────────────────────────────────────────────────
 dataset:
   data_root:       data/processed
+  # Required local artifact: this experiment expects the preprocessing/data
+  # preparation workflow to generate `data/processed/stad_rna.parquet`
+  # before startup. The parquet file is not committed in this repository.
   tabular_file:    stad_rna.parquet
   target_col:      TMB   # regression target column
 

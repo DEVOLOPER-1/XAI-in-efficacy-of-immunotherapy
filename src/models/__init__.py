@@ -214,22 +214,22 @@ _TABULAR_REGISTRY: dict[str, Any] = {
     "decision_tree":    _load_decision_tree,    # single tree — reference implementation
     "random_forest":    _load_random_forest,    # bagged ensemble
     "gradient_boosted": _load_gradient_boosted, # histogram GBT, handles NaN
-    # ── Boosting libraries ─────────────────────────────────────────────
-    "xgboost":          _load_xgboost,
-    "catboost":         _load_catboost,
-    # ── Neural ────────────────────────────────────────────────────────
-    "tabular_mlp":      _load_tabular_mlp,
+    # ── Boosting libraries (not yet implemented) ───────────────────────
+    # "xgboost":        _load_xgboost,          # TODO: implement XGBoostRegressor
+    # "catboost":       _load_catboost,          # TODO: implement CatBoostRegressor
+    # ── Neural (not yet implemented) ──────────────────────────────────
+    # "tabular_mlp":    _load_tabular_mlp,       # TODO: implement TabularMLP
 }
 
 _IMAGE_REGISTRY: dict[str, Any] = {
     "resnet": _load_resnet,
-    "vit":    _load_vit,
-    "abmil":  _load_abmil,
+    # "vit":  _load_vit,    # TODO: implement ViTEncoder
+    # "abmil": _load_abmil, # TODO: implement ABMILModel
 }
 
 _FUSION_REGISTRY: dict[str, Any] = {
-    "early": _load_early_fusion,
-    "late":  _load_late_fusion,
+    # "early": _load_early_fusion,  # TODO: implement EarlyFusionModel in src/models/fusion.py
+    # "late":  _load_late_fusion,   # TODO: implement LateFusionModel in src/models/fusion.py
 }
 
 # Flat view for listing + validation

@@ -76,7 +76,14 @@ def _init_wandb(cfg: DotDict) -> Any:
 
 def _is_tree_model(cfg: DotDict) -> bool:
     """Return True for tree-based models that use fit() instead of forward()."""
-    tree_types = {"xgboost", "catboost", "decision_tree","random_forest", "lasso_regressor"}
+    tree_types = {
+        "xgboost",
+        "catboost",
+        "decision_tree",
+        "random_forest",
+        "lasso_regressor",
+        "gradient_boosted",
+    }
     model_cfg  = cfg.get("model") or DotDict({})
     return (model_cfg.get("type") or "").lower() in tree_types
 
@@ -297,7 +304,13 @@ def _train_tree(
         metrics["rmse"], metrics["r2"], metrics["c_index"],
     )
 
-    model.print_feature_importances(feature_names = train_loader.feature_names, top_n= cfg.model.select_top_k)
+    if hasattr(model, "print_feature_importances") and callable(model.print_feature_importances):
+        model.print_feature_importances(
+            feature_names=train_loader.feature_names,
+            top_n=cfg.model.select_top_k,
+        )
+    else:
+        log.debug("Model does not implement print_feature_importances; skipping.")
 
     if run is not None:
         import wandb
@@ -310,7 +323,9 @@ def _train_tree(
         save_checkpoint(model, save_dir / f"{run_name}_weights.pkl")
 
         if (training_cfg.get('upload_pickeled_model', False)):
-            wandb.log_artifact(save_dir / f"{run_name}_weights.pkl", type="model")
+            artifact = wandb.Artifact(name=f"{run_name}_weights", type="model")
+            artifact.add_file(str(save_dir / f"{run_name}_weights.pkl"))
+            run.log_artifact(artifact)
 
 
     return metrics
@@ -319,19 +334,38 @@ def _train_tree(
 def _collect_tabular(
     loader: Any,
 ) -> tuple["np.ndarray | None", "np.ndarray | None"]:
-    """Drain a batch loader and stack all tabular arrays + targets."""
+    """Drain a batch loader and stack all tabular arrays + targets.
+
+    Rows with NaN targets are skipped so missing labels are not turned into
+    real ``0.0`` targets for training or validation.
+    """
     X_parts: list[np.ndarray] = []
-    y_parts: list[float]      = []
+    y_parts: list[np.ndarray] = []
+    skipped_targets = 0
 
     for batch in loader:
         if batch["tabular"] is None:
             continue
-        X_parts.append(batch["tabular"])
-        for t in batch["target"]:
-            # Use 0.0 for NaN targets — tree models need no NaN in y
-            y_parts.append(float(t) if not np.isnan(t) else 0.0)
+
+        X_batch = np.asarray(batch["tabular"])
+        y_batch = np.asarray(batch["target"], dtype=np.float32).reshape(-1)
+
+        valid_mask = ~np.isnan(y_batch)
+        skipped_targets += int((~valid_mask).sum())
+
+        if not np.any(valid_mask):
+            continue
+
+        X_parts.append(X_batch[valid_mask])
+        y_parts.append(y_batch[valid_mask])
+
+    if skipped_targets:
+        log.warning(
+            "Skipped %d tabular rows with NaN targets while collecting data for tree model.",
+            skipped_targets,
+        )
 
     if not X_parts:
         return None, None
 
-    return np.concatenate(X_parts, axis=0), np.array(y_parts, dtype=np.float32)
+    return np.concatenate(X_parts, axis=0), np.concatenate(y_parts, axis=0).astype(np.float32)

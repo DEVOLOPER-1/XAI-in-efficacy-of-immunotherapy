@@ -18,7 +18,7 @@ dataset:
 #    batch_size         int   32
 #    image_size         int   224      ← resize each patch/tile to this resolution
     data_root: "data/processed"
-    tabular_file: "stad_clinical_patient_full.parquet"
+    tabular_file: "clinical.csv"
     images_dir: "images"
     features_dir: "features"
     target_col: "TMB"

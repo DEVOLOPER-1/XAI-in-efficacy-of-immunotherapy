@@ -145,18 +145,22 @@ class TabularStore:
             )
             self._targets = pd.Series(dtype=float)
 
-        # # -- Data Preprocessing -----------------------------------------------
-        # #     -- Imputation -------------------------------------------------------
-        # for col in raw.columns:
-        #     if pd.api.types.is_numeric_dtype(raw[col]):
-        #         raw[col] = raw[col].fillna(raw[col].median())
-        #     else:
-        #         mode_val = raw[col].mode()
-        #         raw[col] = raw[col].fillna(mode_val.iloc[0] if not mode_val.empty else "UNKNOWN")
-        #
-        # #     -- Categorical encoding ---------------------------------------------
-        # for col in raw.select_dtypes(include="object").columns:
-        #     raw[col] = raw[col].astype("category").cat.codes.astype(float)
+        # -- Data Preprocessing -----------------------------------------------
+        #     -- Imputation -------------------------------------------------------
+        for col in raw.columns:
+            if pd.api.types.is_numeric_dtype(raw[col]):
+                raw[col] = raw[col].fillna(raw[col].median())
+            else:
+                mode_val = raw[col].mode()
+                raw[col] = raw[col].fillna(
+                    mode_val.iloc[0] if not mode_val.empty else "UNKNOWN"
+                )
+
+        #     -- Categorical encoding ---------------------------------------------
+        for col in raw.select_dtypes(include=["object", "category"]).columns:
+            raw[col] = raw[col].astype("category").cat.codes.astype(float)
+        for col in raw.select_dtypes(include=["bool"]).columns:
+            raw[col] = raw[col].astype(float)
 
         self._features: pd.DataFrame = raw.astype(np.float32)
 
@@ -304,18 +308,24 @@ class SlideStore:
 
         width, height = slide.dimensions
         ps = self._patch_size
-        grid = [
-            (x * ps, y * ps)
-            for x in range(max(1, width  // ps))
-            for y in range(max(1, height // ps))
-        ]
+        grid_w = max(1, width  // ps)
+        grid_h = max(1, height // ps)
+        total_tiles = grid_w * grid_h
 
         # Random tile sampling — not seeded so each epoch sees different tiles.
         # This acts as data augmentation for the image modality.
-        sampled = random.sample(grid, min(self._max_patches, len(grid)))
+        sampled = random.sample(range(total_tiles), min(self._max_patches, total_tiles))
 
         tiles: list[np.ndarray] = []
-        for (x_off, y_off) in sampled:
+        for idx in sampled:
+            # Row-major: scan left-to-right, top-to-bottom.
+            # OpenSlide read_region(x, y) expects x=horizontal, y=vertical.
+            # col = idx % grid_w  → horizontal position (x-axis)
+            # row = idx // grid_w → vertical position   (y-axis)
+            x_idx = idx % grid_w   # column index (horizontal)
+            y_idx = idx // grid_w  # row index    (vertical)
+            x_off = x_idx * ps
+            y_off = y_idx * ps
             region = slide.read_region((x_off, y_off), 0, (ps, ps))
             tile   = np.array(region.convert("RGB"), dtype=np.float32) / 255.0
             tile   = _resize_hwc(tile, self._image_size)
@@ -396,7 +406,7 @@ class MultimodalDataset:
             tabular = self._tabular.get_features(pid)
             target  = self._tabular.get_target(pid)
             if tabular is not None:
-                modalities.add("models/tabular")
+                modalities.add("tabular")
 
         # -- Image ------------------------------------------------------------
         image = None
