@@ -297,7 +297,7 @@ def _train_tree(
         metrics["rmse"], metrics["r2"], metrics["c_index"],
     )
 
-    model.print_feature_importances(top_n= cfg.model.select_top_k)
+    model.print_feature_importances(feature_names = train_loader.feature_names, top_n= cfg.model.select_top_k)
 
     if run is not None:
         import wandb
@@ -309,7 +309,8 @@ def _train_tree(
         run_name = cfg.wandb.get("run_name") or "experiment"
         save_checkpoint(model, save_dir / f"{run_name}_weights.pkl")
 
-        wandb.log_artifact(save_dir / f"{run_name}_weights.pkl", type="model")
+        if (training_cfg.get('upload_pickeled_model', False)):
+            wandb.log_artifact(save_dir / f"{run_name}_weights.pkl", type="model")
 
 
     return metrics

@@ -64,6 +64,7 @@ import logging
 from typing import Any
 
 import numpy as np
+from sklearn.preprocessing import RobustScaler
 
 from src.config import DotDict
 
@@ -199,7 +200,7 @@ class _TabularBase:
         imps = self.feature_importances_
         if imps is None:
             log.warning("%s does not expose feature importances.", self.__class__.__name__)
-            return
+            imps = self._est[-1].coef_
 
         order = np.argsort(imps)[::-1][:top_n]
         log.info("Top-%d feature importances for %s:", top_n, self.__class__.__name__)
@@ -411,3 +412,34 @@ class GradientBoostedTrees(_TabularBase):
             n_iter_no_change=n_iter_no_change,
             random_state=random_state,
         )
+
+class LassoRegressor(_TabularBase):
+    _category_label = "LassoRegression"
+
+    def _build_estimator(self, cfg: DotDict) -> Any:
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import PowerTransformer, RobustScaler
+        from sklearn.linear_model import Lasso
+
+        model_cfg = cfg.get("model") or DotDict({})
+
+
+        log.info(
+            "DecisionTree config — %s",
+            model_cfg
+        )
+
+
+        return Pipeline([
+            ("power", PowerTransformer(standardize=False)),  # e.g. Yeo-Johnson by default
+            ("scaler", RobustScaler()),
+            ("lasso", Lasso(
+                alpha=model_cfg.get("alpha"),
+                max_iter=model_cfg.get("max_iter"),
+                selection=model_cfg.get("selection"),
+                tol=model_cfg.get("tol"),
+
+                random_state=model_cfg.get("random_state")
+            ))
+        ])
+

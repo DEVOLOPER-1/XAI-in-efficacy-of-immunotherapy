@@ -1,0 +1,54 @@
+experiment_name: lasso_baseline_genetic
+
+# ── Modalities ──────────────────────────────────────────────────────────────
+modalities:
+  tabular: true
+  image:   false
+  modality: genetic  # for the dashboard categories
+
+# ── Model ───────────────────────────────────────────────────────────────────
+model:
+  category: tabular_only
+  type:     lasso_regressor
+
+  alpha: 0.1
+  max_iter: 10000
+  selection: random
+  tol: 0.01
+
+  select_top_k: 256
+
+  random_state: 42
+
+# ── Dataset ─────────────────────────────────────────────────────────────────
+dataset:
+  data_root:       data/processed
+  tabular_file:    stad_rna.parquet
+  target_col:      TMB   # regression target column
+
+  val_ratio:    0.15    # 15% of patients held out for validation
+  seed:         42      # controls the deterministic train/val split
+#  batch_size:   512     not used for decision tree, but kept here for config completeness
+
+  # image fields are unused when modalities.image: false, but kept here
+  # so the config is complete if you later switch to a fusion model.
+  use_preextracted: true
+  features_dir:     features
+
+# ── Training ────────────────────────────────────────────────────────────────
+training:
+  save_dir: freezed-models/runs/checkpoints
+  upload_pickeled_model: false
+
+  # risk_threshold: binarise TMB at this value to compute AUROC/AUPRC.
+  # Patients with TMB >= threshold → high-risk class (label 1).
+  # Set to null to skip binary metrics.
+  risk_threshold:  3.84
+
+# ── Weights & Biases ────────────────────────────────────────────────────────
+wandb:
+  run_name: "lasso_alpha:0.1_scaled_iter:val_ratio:.15"
+  tags:
+    - genetic_only
+    - linear
+    - feature_selection

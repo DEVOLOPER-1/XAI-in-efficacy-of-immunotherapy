@@ -137,7 +137,7 @@ class TabularStore:
 
         # Separate target from features
         if target_col in raw.columns:
-            self._targets: pd.Series = np.log1p(raw.pop(target_col)+1).astype(float)
+            self._targets: pd.Series = raw.pop(target_col).astype(float)
         else:
             log.warning(
                 "Target column '%s' not found in CSV — targets will be None for all patients.",
@@ -172,6 +172,17 @@ class TabularStore:
     @property
     def n_features(self) -> int:
         return len(self._features.columns)
+
+    @property
+    def feature_names(self) -> list[str]:
+        """Ordered list of feature column names after preprocessing.
+
+        The order matches the axis-1 index of every array returned by
+        get_features(), so feature_names[i] is the name of column i.
+        Use this to label feature-importance plots or pass to
+        model.print_feature_importances(feature_names=...).
+        """
+        return self._features.columns.tolist()
 
     def get_features(self, patient_id: str) -> np.ndarray | None:
         """Return float32 (n_features,) array, or None if patient absent."""
@@ -485,19 +496,27 @@ class _BatchLoader:
     Intentionally avoids a hard torch.DataLoader dependency so tree-model
     members (XGBoost / CatBoost) can use it without installing PyTorch.
     train.py is responsible for converting numpy arrays to tensors.
+
+    Attributes:
+        feature_names: Ordered list of tabular column names (strings), matching
+                       axis-1 of every batch["tabular"] array. None if the
+                       tabular modality is disabled. Pass this directly to
+                       model.print_feature_importances(feature_names=loader.feature_names).
     """
 
     def __init__(
         self,
-        dataset:    MultimodalDataset,
-        batch_size: int  = 32,
-        shuffle:    bool = False,
-        seed:       int  = 42,
+        dataset:       MultimodalDataset,
+        batch_size:    int         = 32,
+        shuffle:       bool        = False,
+        seed:          int         = 42,
+        feature_names: list[str] | None = None,
     ) -> None:
         self._dataset    = dataset
         self._batch_size = batch_size
         self._shuffle    = shuffle
         self._seed       = seed
+        self.feature_names: list[str] | None = feature_names
 
     def __len__(self) -> int:
         return math.ceil(len(self._dataset) / self._batch_size)
@@ -603,8 +622,19 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader]:
     train_ds = MultimodalDataset(tabular_store, slide_store, train_ids, shuffle=True,  seed=seed)
     val_ds   = MultimodalDataset(tabular_store, slide_store, val_ids,   shuffle=False)
 
-    train_loader = _BatchLoader(train_ds, batch_size=batch_size, shuffle=True,  seed=seed)
-    val_loader   = _BatchLoader(val_ds,   batch_size=batch_size, shuffle=False)
+    train_loader = _BatchLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        seed=seed,
+        feature_names=tabular_store.feature_names if tabular_store else None,
+    )
+    val_loader = _BatchLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        feature_names=tabular_store.feature_names if tabular_store else None,
+    )
 
     log.info(
         "Dataloaders: train=%d batches, val=%d batches (batch_size=%d)",
