@@ -41,7 +41,7 @@ dataset:
 # ── Training ────────────────────────────────────────────────────────────────
 training:
   save_dir: freezed-models/runs/checkpoints
-  upload_pickeled_model: false
+  upload_pickled_model: false
 
   # risk_threshold: binarise TMB at this value to compute AUROC/AUPRC.
   # Patients with TMB >= threshold → high-risk class (label 1).

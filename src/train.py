@@ -322,7 +322,7 @@ def _train_tree(
         run_name = cfg.wandb.get("run_name") or "experiment"
         save_checkpoint(model, save_dir / f"{run_name}_weights.pkl")
 
-        if (training_cfg.get('upload_pickeled_model', False)):
+        if (training_cfg.get('upload_pickled_model', False)):
             artifact = wandb.Artifact(name=f"{run_name}_weights", type="model")
             artifact.add_file(str(save_dir / f"{run_name}_weights.pkl"))
             run.log_artifact(artifact)
