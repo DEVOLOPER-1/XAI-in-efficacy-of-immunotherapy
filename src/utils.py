@@ -1,376 +1,462 @@
 """
-src/utils.py — Shared utility functions for AIC-4 Zerone.
+src/utils.py — Shared utilities for WhiteBox Cancer Research.
 
 Covers:
-  - Bounding-box helpers (IoU, overlap, centre)
-  - Accuracy metrics (AUC of success curve, Normalised Precision)
-  - Efficiency measurement (CPU latency, FLOPs, parameter count, model size)
-  - Official scoring formula (S_acc, S_eff, Final Score)
+  - Medical regression metrics:  RMSE, MAE, R², Pearson r, C-Index (survival)
+  - Classification metrics:      AUROC, AUPRC (for binary tasks / thresholded survival)
+  - Cross-validation helpers:    stratified k-fold split by target quantile
+  - Prediction IO:               save / load result CSV in leaderboard format
+  - Checkpoint helpers:          save / load torch or sklearn models
 
-⚠ This file is shared code — see STANDARDS §5 before modifying.
+Hardware efficiency metrics (latency, FLOPs, model size) are intentionally
+removed — the cancer research task has no efficiency budget constraint.
+
+⚠ Shared code — see STANDARDS §5 before modifying.
 """
 
 from __future__ import annotations
 
-import time
-import os
+import logging
+import pickle
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Budget ceilings (from README §8.6 / §12)
-# ---------------------------------------------------------------------------
-
-BUDGET_FLOPS_G:    float = 30.0   # GFLOPs
-BUDGET_PARAMS_M:   float = 50.0   # millions of parameters
-BUDGET_LATENCY_MS: float = 30.0   # milliseconds, measured on CPU
-BUDGET_SIZE_GB:    float = 0.5    # gigabytes
-
-# Efficiency scoring weights (from STANDARDS §6)
-W_FLOPS:    float = 0.25
-W_PARAMS:   float = 0.15
-W_LATENCY:  float = 0.35   # highest weight — optimise this first
-W_SIZE:     float = 0.25
-
-# Accuracy scoring weights (from README §12)
-W_AUC:       float = 0.6
-W_NORM_PREC: float = 0.4
-
-# Final score lambda (penalises efficiency)
-LAMBDA: float = 0.2
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Bounding-box helpers
+# Core regression metrics
 # ---------------------------------------------------------------------------
 
-def bbox_iou(
-    pred: tuple[float, float, float, float],
-    gt:   tuple[float, float, float, float],
+def rmse(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
+    """Root Mean Squared Error — primary regression metric.
+
+    Lower is better. Units match the target (e.g. months for survival).
+
+    Args:
+        y_true: Ground-truth values. NaN entries are ignored.
+        y_pred: Predicted values.
+
+    Returns:
+        RMSE as a float.
+    """
+    yt, yp = _clean_pairs(y_true, y_pred)
+    if len(yt) == 0:
+        return float("nan")
+    return float(np.sqrt(np.mean((yt - yp) ** 2)))
+
+
+def mae(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
+    """Mean Absolute Error.
+
+    More robust to outliers than RMSE; useful for clinical interpretability
+    (e.g. "predictions are off by X months on average").
+    """
+    yt, yp = _clean_pairs(y_true, y_pred)
+    if len(yt) == 0:
+        return float("nan")
+    return float(np.mean(np.abs(yt - yp)))
+
+
+def r2_score(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
+    """Coefficient of determination (R²).
+
+    1.0 = perfect prediction. 0.0 = predicts the mean. Can be negative.
+
+    Args:
+        y_true: Ground-truth values.
+        y_pred: Predicted values.
+
+    Returns:
+        R² as a float in (-∞, 1].
+    """
+    yt, yp = _clean_pairs(y_true, y_pred)
+    if len(yt) < 2:
+        return float("nan")
+    ss_res = np.sum((yt - yp) ** 2)
+    ss_tot = np.sum((yt - np.mean(yt)) ** 2)
+    if ss_tot == 0.0:
+        return float("nan")     # target has zero variance — metric undefined
+    return float(1.0 - ss_res / ss_tot)
+
+
+def pearson_r(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
+    """Pearson correlation coefficient between predictions and ground truth.
+
+    Measures linear association regardless of scale. Range: [-1, 1].
+    Particularly useful for survival regression where RMSE magnitude is
+    harder to interpret across different datasets.
+    """
+    yt, yp = _clean_pairs(y_true, y_pred)
+    if len(yt) < 2:
+        return float("nan")
+    corr = np.corrcoef(yt, yp)
+    return float(corr[0, 1])
+
+
+# ---------------------------------------------------------------------------
+# Survival-specific metric
+# ---------------------------------------------------------------------------
+
+def concordance_index(
+    durations: Sequence[float],
+    predictions: Sequence[float],
+    events: Sequence[int] | None = None,
 ) -> float:
-    """Compute Intersection-over-Union between two (x, y, w, h) boxes.
+    """Harrell's Concordance Index (C-Index) for survival analysis.
+
+    Measures the probability that, for a random pair of patients where one
+    has a shorter survival time and actually experienced the event, the model
+    correctly predicts the shorter survival.
+
+    Range: [0, 1].  0.5 = random.  1.0 = perfect ordering.
 
     Args:
-        pred: Predicted bounding box (x, y, w, h).
-        gt:   Ground-truth bounding box (x, y, w, h).
+        durations:   Observed survival times (or times-to-event).
+        predictions: Model's predicted risk scores or survival times.
+                     Higher score = higher risk = shorter predicted survival.
+        events:      Binary event indicators (1 = event occurred, 0 = censored).
+                     If None, all patients are assumed to have experienced the event.
 
     Returns:
-        IoU value in [0, 1]. Returns 0.0 if either box has zero area.
+        C-Index float. NaN if no comparable pairs exist.
+
+    Note:
+        This is a simplified O(n²) implementation suitable for typical
+        cohort sizes (<10 000 patients). For large datasets, use lifelines:
+            from lifelines.utils import concordance_index as lifelines_ci
     """
-    px, py, pw, ph = pred
-    gx, gy, gw, gh = gt
+    d = np.array(durations,   dtype=np.float64)
+    p = np.array(predictions, dtype=np.float64)
 
-    # Convert to (x1, y1, x2, y2)
-    px2, py2 = px + pw, py + ph
-    gx2, gy2 = gx + gw, gy + gh
+    if events is None:
+        e = np.ones(len(d), dtype=np.int8)
+    else:
+        e = np.array(events, dtype=np.int8)
 
-    inter_x1 = max(px, gx)
-    inter_y1 = max(py, gy)
-    inter_x2 = min(px2, gx2)
-    inter_y2 = min(py2, gy2)
+    # Remove NaN rows
+    mask = ~(np.isnan(d) | np.isnan(p))
+    d, p, e = d[mask], p[mask], e[mask]
 
-    inter_w = max(0.0, inter_x2 - inter_x1)
-    inter_h = max(0.0, inter_y2 - inter_y1)
-    inter_area = inter_w * inter_h
+    concordant   = 0
+    discordant   = 0
+    tied_risk    = 0
 
-    pred_area = pw * ph
-    gt_area   = gw * gh
-    union_area = pred_area + gt_area - inter_area
+    for i in range(len(d)):
+        if e[i] == 0:
+            continue  # censored patient cannot be the "earlier" in a pair
+        for j in range(len(d)):
+            if i == j:
+                continue
+            if d[j] <= d[i]:
+                continue  # j did not have a longer follow-up than i
+            # Patient i had a shorter survival — check if model agrees
+            if p[i] > p[j]:
+                concordant += 1
+            elif p[i] < p[j]:
+                discordant += 1
+            else:
+                tied_risk += 1
 
-    if union_area <= 0.0:
-        return 0.0
+    total = concordant + discordant + tied_risk
+    if total == 0:
+        return float("nan")
 
-    return float(inter_area / union_area)
-
-
-def bbox_centre(bbox: tuple[float, float, float, float]) -> tuple[float, float]:
-    """Return the centre (cx, cy) of an (x, y, w, h) box."""
-    x, y, w, h = bbox
-    return x + w / 2.0, y + h / 2.0
-
-
-def bbox_diagonal(bbox: tuple[float, float, float, float]) -> float:
-    """Return the diagonal length of an (x, y, w, h) box (used for NormPrecision)."""
-    _, _, w, h = bbox
-    return float(np.sqrt(w ** 2 + h ** 2))
+    return float((concordant + 0.5 * tied_risk) / total)
 
 
 # ---------------------------------------------------------------------------
-# Accuracy metrics
+# Binary / threshold metrics (useful for high-risk / low-risk stratification)
 # ---------------------------------------------------------------------------
 
-def success_auc(
-    preds: Sequence[tuple[float, float, float, float]],
-    gts:   Sequence[tuple[float, float, float, float]],
-    thresholds: Sequence[float] | None = None,
+def auroc(
+    y_true: Sequence[int],
+    y_score: Sequence[float],
 ) -> float:
-    """Compute the Area Under the IoU success-rate curve.
-
-    For each IoU threshold t in [0, 1], the success rate is the fraction of
-    frames where IoU(pred, gt) >= t. AUC is the mean success rate over all
-    thresholds.
-
-    Frames where gt = (0, 0, 0, 0) (target not visible) are skipped.
+    """Area Under the ROC Curve (AUROC) for binary outcomes.
 
     Args:
-        preds:      Sequence of predicted (x, y, w, h) bboxes.
-        gts:        Sequence of ground-truth (x, y, w, h) bboxes.
-        thresholds: IoU thresholds to evaluate at. Defaults to 0.00–1.00 (101 pts).
+        y_true:  Binary labels (0 / 1).
+        y_score: Model's continuous risk/probability scores.
 
     Returns:
-        AUC in [0, 1].
+        AUROC in [0, 1]. 0.5 = random. 1.0 = perfect.
     """
-    if thresholds is None:
-        thresholds = np.linspace(0.0, 1.0, 101).tolist()
+    yt = np.array(y_true,  dtype=np.int8)
+    ys = np.array(y_score, dtype=np.float64)
 
-    ious = [
-        bbox_iou(p, g)
-        for p, g in zip(preds, gts)
-        if not (g[2] == 0 and g[3] == 0)   # skip "not visible" frames
-    ]
+    mask = ~np.isnan(ys)
+    yt, ys = yt[mask], ys[mask]
 
-    if not ious:
-        return 0.0
+    if len(np.unique(yt)) < 2:
+        log.warning("auroc: only one class present in y_true — returning NaN.")
+        return float("nan")
 
-    ious_arr = np.array(ious)
-    success_rates = [float(np.mean(ious_arr >= t)) for t in thresholds]
-    return float(np.mean(success_rates))
+    # Trapezoidal AUROC via sorting
+    order     = np.argsort(-ys)        # descending by score
+    yt_sorted = yt[order]
+    n_pos     = yt_sorted.sum()
+    n_neg     = len(yt_sorted) - n_pos
+
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+
+    tp_cum  = np.cumsum(yt_sorted)
+    fp_cum  = np.cumsum(1 - yt_sorted)
+    tpr     = tp_cum  / n_pos
+    fpr     = fp_cum  / n_neg
+
+    return float(np.trapz(tpr, fpr))
 
 
-def norm_precision(
-    preds: Sequence[tuple[float, float, float, float]],
-    gts:   Sequence[tuple[float, float, float, float]],
-    threshold: float = 0.5,
+def auprc(
+    y_true: Sequence[int],
+    y_score: Sequence[float],
 ) -> float:
-    """Compute scale-invariant normalised centre-error precision.
+    """Area Under the Precision-Recall Curve (AUPRC).
 
-    For each frame, the centre error is divided by the GT bounding-box
-    diagonal to make it scale-invariant. The precision score is the fraction
-    of frames where this normalised error is below *threshold*.
+    Preferred over AUROC for imbalanced datasets (e.g. rare events).
 
     Args:
-        preds:     Predicted (x, y, w, h) bboxes.
-        gts:       Ground-truth (x, y, w, h) bboxes.
-        threshold: Normalised error threshold (default 0.5 — half the diagonal).
+        y_true:  Binary labels (0 / 1).
+        y_score: Continuous risk scores.
 
     Returns:
-        NormPrecision score in [0, 1].
+        AUPRC in [0, 1].
     """
-    errors: list[float] = []
-    for pred, gt in zip(preds, gts):
-        if gt[2] == 0 and gt[3] == 0:  # target not visible
-            continue
-        diag = bbox_diagonal(gt)
-        if diag <= 0.0:
-            continue
-        pcx, pcy = bbox_centre(pred)
-        gcx, gcy = bbox_centre(gt)
-        dist = float(np.sqrt((pcx - gcx) ** 2 + (pcy - gcy) ** 2))
-        errors.append(dist / diag)
+    yt = np.array(y_true,  dtype=np.int8)
+    ys = np.array(y_score, dtype=np.float64)
 
-    if not errors:
-        return 0.0
+    mask = ~np.isnan(ys)
+    yt, ys = yt[mask], ys[mask]
 
-    return float(np.mean(np.array(errors) < threshold))
+    order     = np.argsort(-ys)
+    yt_sorted = yt[order]
+    n_pos     = yt_sorted.sum()
 
+    if n_pos == 0:
+        return float("nan")
 
-def compute_s_acc(auc: float, norm_prec: float) -> float:
-    """Accuracy component of the final score.
+    tp_cum   = np.cumsum(yt_sorted)
+    precision = tp_cum / np.arange(1, len(yt_sorted) + 1)
+    recall    = tp_cum / n_pos
 
-    S_acc = 0.6 × AUC + 0.4 × NormPrecision
-    """
-    return W_AUC * auc + W_NORM_PREC * norm_prec
+    return float(np.trapz(precision, recall))
 
 
 # ---------------------------------------------------------------------------
-# Efficiency measurement
+# Omnibus metric dict — used by train.py and W&B logging
 # ---------------------------------------------------------------------------
 
-def measure_cpu_latency(
-    tracker: Any,
-    frame: "np.ndarray",
-    n_runs: int = 100,
-    warmup: int = 10,
-) -> float:
-    """Measure per-frame inference latency on CPU (milliseconds).
-
-    Runs tracker.update(frame) repeatedly on CPU to produce a stable median.
-    CPU measurement is mandatory — the competition evaluates on standardised
-    CPU hardware (see STANDARDS §6 and README §8.6).
-
-    Args:
-        tracker: An initialised tracker (TrackerProtocol).
-        frame:   A representative BGR frame (numpy array).
-        n_runs:  Number of timed repetitions.
-        warmup:  Number of un-timed warm-up iterations.
-
-    Returns:
-        Median latency in milliseconds.
-    """
-    # If torch is available, force CPU for timing purposes.
-    try:
-        import torch
-        _ctx = torch.no_grad()
-        _ctx.__enter__()
-    except ImportError:
-        _ctx = None  # type: ignore[assignment]
-
-    # Warm up (allows caches to settle)
-    for _ in range(warmup):
-        tracker.update(frame)
-
-    # Timed runs
-    times_ms: list[float] = []
-    for _ in range(n_runs):
-        t0 = time.perf_counter()
-        tracker.update(frame)
-        t1 = time.perf_counter()
-        times_ms.append((t1 - t0) * 1_000.0)
-
-    if _ctx is not None:
-        _ctx.__exit__(None, None, None)
-
-    return float(np.median(times_ms))
-
-
-def measure_flops(
-    model: Any,
-    input_shape: tuple[int, ...] = (1, 3, 255, 255),
-) -> float:
-    """Estimate GFLOPs for a PyTorch model using thop (if available).
-
-    Falls back gracefully to 0.0 for classical-CV models that have no
-    PyTorch computation graph.
-
-    Args:
-        model:       A torch.nn.Module.
-        input_shape: (B, C, H, W) dummy input tensor shape.
-
-    Returns:
-        GFLOPs (float). Returns 0.0 if thop / torch is unavailable.
-    """
-    try:
-        import torch
-        from thop import profile  # type: ignore[import]
-
-        dummy = torch.zeros(*input_shape)
-        flops_raw, _ = profile(model, inputs=(dummy,), verbose=False)
-        return float(flops_raw / 1e9)
-    except (ImportError, Exception):
-        # Classical trackers or missing thop — return sentinel
-        return 0.0
-
-
-def measure_params(model: Any) -> float:
-    """Count trainable parameters in millions for a PyTorch model.
-
-    Returns 0.0 for non-PyTorch models.
-    """
-    try:
-        import torch.nn as nn
-        if not isinstance(model, nn.Module):
-            return 0.0
-        return sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6
-    except ImportError:
-        return 0.0
-
-
-def measure_model_size(model_path: str | Path) -> float:
-    """Return the on-disk size of a saved model file in gigabytes.
-
-    Args:
-        model_path: Path to a .pth / .pt / .pkl file.
-
-    Returns:
-        File size in GB. Returns 0.0 if the file does not exist.
-    """
-    path = Path(model_path)
-    if not path.exists():
-        return 0.0
-    return path.stat().st_size / 1e9
-
-
-# ---------------------------------------------------------------------------
-# Efficiency scoring
-# ---------------------------------------------------------------------------
-
-def _norm(value: float, budget: float) -> float:
-    """Clip-normalise a metric against its budget ceiling: min(1, value / budget)."""
-    return min(1.0, value / budget) if budget > 0 else 0.0
-
-
-def compute_s_eff(
-    flops_g:    float,
-    params_m:   float,
-    latency_ms: float,
-    size_gb:    float,
-) -> float:
-    """Compute the efficiency component S_eff.
-
-    S_eff = 0.25 × norm(FLOPs) + 0.15 × norm(Params)
-          + 0.35 × norm(Latency) + 0.25 × norm(Size)
-
-    Lower is better — a model well within all budgets approaches 0.
-
-    Args:
-        flops_g:    GFLOPs.
-        params_m:   Millions of parameters.
-        latency_ms: CPU latency in milliseconds.
-        size_gb:    Model file size in gigabytes.
-
-    Returns:
-        S_eff in [0, 1].
-    """
-    return (
-        W_FLOPS   * _norm(flops_g,    BUDGET_FLOPS_G)    +
-        W_PARAMS  * _norm(params_m,   BUDGET_PARAMS_M)   +
-        W_LATENCY * _norm(latency_ms, BUDGET_LATENCY_MS) +
-        W_SIZE    * _norm(size_gb,    BUDGET_SIZE_GB)
-    )
-
-
-def compute_final_score(s_acc: float, s_eff: float) -> float:
-    """Compute the competition's final score.
-
-    Final Score = S_acc − 0.2 × S_eff
-
-    Args:
-        s_acc: Accuracy component (from compute_s_acc).
-        s_eff: Efficiency component (from compute_s_eff).
-
-    Returns:
-        Final score (higher is better).
-    """
-    return s_acc - LAMBDA * s_eff
-
-
-def compute_all_scores(
-    auc:        float,
-    norm_prec:  float,
-    flops_g:    float,
-    params_m:   float,
-    latency_ms: float,
-    size_gb:    float,
+def compute_all_metrics(
+    y_true:    Sequence[float],
+    y_pred:    Sequence[float],
+    events:    Sequence[int] | None = None,
+    threshold: float | None        = None,
 ) -> dict[str, float]:
-    """Convenience wrapper — compute and return all score components at once.
+    """Compute and return all relevant metrics in a single call.
 
-    Returns a dict with keys: auc, norm_prec, s_acc, s_eff, final_score.
-    Matches the column names in logs/leaderboard.csv.
+    This dict maps directly to W&B log keys and leaderboard columns.
+
+    Args:
+        y_true:    Ground-truth regression targets (e.g. survival months).
+        y_pred:    Model predictions.
+        events:    Binary event indicators for C-Index. None = all events.
+        threshold: If provided, binarise y_true at this value and compute
+                   AUROC / AUPRC (useful for high-risk stratification).
+
+    Returns:
+        Dict with keys: rmse, mae, r2, pearson_r, c_index.
+        If threshold is given, also: auroc, auprc.
     """
-    s_acc  = compute_s_acc(auc, norm_prec)
-    s_eff  = compute_s_eff(flops_g, params_m, latency_ms, size_gb)
-    final  = compute_final_score(s_acc, s_eff)
-
-    return {
-        "auc":         auc,
-        "norm_prec":   norm_prec,
-        "s_acc":       s_acc,
-        "flops_g":     flops_g,
-        "params_m":    params_m,
-        "latency_ms":  latency_ms,
-        "size_gb":     size_gb,
-        "s_eff":       s_eff,
-        "final_score": final,
+    metrics: dict[str, float] = {
+        "rmse":      rmse(y_true, y_pred),
+        "mae":       mae(y_true, y_pred),
+        "r2":        r2_score(y_true, y_pred),
+        "pearson_r": pearson_r(y_true, y_pred),
+        "c_index":   concordance_index(y_true, y_pred, events),
     }
+
+    if threshold is not None:
+        yt, yp = _clean_pairs(y_true, y_pred)
+        binary_true = [1 if t >= threshold else 0 for t in yt]
+        metrics["auroc"] = auroc(binary_true, yp)
+        metrics["auprc"] = auprc(binary_true, yp)
+
+    return metrics
+
+
+# ---------------------------------------------------------------------------
+# Cross-validation split
+# ---------------------------------------------------------------------------
+
+def stratified_kfold_splits(
+    patient_ids: list[str],
+    y:           Sequence[float],
+    n_splits:    int = 5,
+    seed:        int = 42,
+) -> list[tuple[list[str], list[str]]]:
+    """Stratified K-Fold splits by target quantile (for regression).
+
+    Binning the continuous target into quartiles before stratification
+    ensures each fold has a similar target distribution — important for
+    survival analysis where high-risk patients may be rare.
+
+    Args:
+        patient_ids: All patient IDs.
+        y:           Corresponding target values.
+        n_splits:    Number of folds (default 5).
+        seed:        Random seed for reproducibility.
+
+    Returns:
+        List of (train_ids, val_ids) tuples, one per fold.
+    """
+    y_arr = np.array(y, dtype=np.float64)
+
+    # Bin into quartiles for stratification; NaN patients go into their own bin
+    n_bins   = min(4, len(np.unique(y_arr[~np.isnan(y_arr)])))
+    bins     = np.nanquantile(y_arr, np.linspace(0, 1, n_bins + 1))
+    strata   = np.digitize(y_arr, bins[1:-1])   # 0 … n_bins-1
+
+    # Collect indices per stratum
+    strata_map: dict[int, list[int]] = {}
+    for i, s in enumerate(strata):
+        strata_map.setdefault(int(s), []).append(i)
+
+    rng = np.random.default_rng(seed)
+    for indices in strata_map.values():
+        rng.shuffle(indices)
+
+    # Assign fold indices round-robin within each stratum
+    fold_indices: list[list[int]] = [[] for _ in range(n_splits)]
+    for stratum_indices in strata_map.values():
+        for k, idx in enumerate(stratum_indices):
+            fold_indices[k % n_splits].append(idx)
+
+    splits: list[tuple[list[str], list[str]]] = []
+    for fold in range(n_splits):
+        val_idx   = set(fold_indices[fold])
+        train_idx = [i for i in range(len(patient_ids)) if i not in val_idx]
+        val_list  = [patient_ids[i] for i in fold_indices[fold]]
+        train_list = [patient_ids[i] for i in train_idx]
+        splits.append((train_list, val_list))
+
+    return splits
+
+
+# ---------------------------------------------------------------------------
+# Result CSV helpers (leaderboard format)
+# ---------------------------------------------------------------------------
+
+def save_predictions(
+    patient_ids: list[str],
+    y_pred:      Sequence[float],
+    output_path: str | Path,
+) -> Path:
+    """Save predictions to a CSV in leaderboard/submission format.
+
+    Output format:
+        PATIENT_ID, prediction
+        TCGA-AA-001, 24.3
+        ...
+
+    Args:
+        patient_ids: Patient identifiers.
+        y_pred:      Predicted values.
+        output_path: Destination CSV path.
+
+    Returns:
+        Path to the written file.
+    """
+    import csv
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(path, "w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["PATIENT_ID", "prediction"])
+        for pid, pred in zip(patient_ids, y_pred):
+            writer.writerow([pid, float(pred)])
+
+    log.info("Predictions saved → %s (%d rows)", path, len(patient_ids))
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint helpers
+# ---------------------------------------------------------------------------
+
+def save_checkpoint(model: Any, path: str | Path) -> None:
+    """Save a model checkpoint. Handles both torch and sklearn-style models.
+
+    Torch models: saves state_dict (recommended — smaller, portable).
+    sklearn / XGBoost / CatBoost: pickle serialisation.
+
+    Args:
+        model: The model to save.
+        path:  Destination file path (.pth for torch, .pkl for others).
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import torch
+        if hasattr(model, "state_dict"):
+            torch.save(model.state_dict(), path)
+            log.info("Torch checkpoint saved → %s", path)
+            return
+    except ImportError:
+        pass
+
+    with open(path, "wb") as fh:
+        pickle.dump(model, fh)
+    log.info("Pickle checkpoint saved → %s", path)
+
+
+def load_checkpoint(model: Any, path: str | Path) -> Any:
+    """Load a checkpoint into *model* (in-place for torch, return value for sklearn).
+
+    Args:
+        model: The model object to load weights into.
+        path:  Path to the checkpoint file.
+
+    Returns:
+        The model with loaded weights (always the same object for torch).
+    """
+    path = Path(path)
+    if not path.exists():
+        log.warning("Checkpoint not found: %s — using uninitialised model.", path)
+        return model
+
+    try:
+        import torch
+        if hasattr(model, "load_state_dict"):
+            state = torch.load(path, map_location="cpu", weights_only=True)
+            model.load_state_dict(state)
+            log.info("Torch checkpoint loaded from %s", path)
+            return model
+    except ImportError:
+        pass
+
+    with open(path, "rb") as fh:
+        loaded = pickle.load(fh)
+    log.info("Pickle checkpoint loaded from %s", path)
+    return loaded
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _clean_pairs(
+    y_true: Sequence[float],
+    y_pred: Sequence[float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert to float64 arrays and drop rows where either value is NaN."""
+    yt = np.array(y_true, dtype=np.float64)
+    yp = np.array(y_pred, dtype=np.float64)
+    mask = ~(np.isnan(yt) | np.isnan(yp))
+    return yt[mask], yp[mask]

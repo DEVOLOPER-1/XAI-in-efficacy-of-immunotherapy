@@ -4,17 +4,17 @@ main.py — Top-level CLI entry point for AIC-4 Zerone tracker.
 
 Usage examples:
     # Train
-    python main.py --config configs/experiments/siamfc_mobile.yaml --mode train
+    python main.py --config configs/experiments/random_forest.yaml --mode train
 
     # Evaluate on validation split
-    python main.py --config configs/experiments/siamfc_mobile.yaml --mode eval
+    python main.py --config configs/experiments/random_forest.yaml --mode eval
 
     # Generate Kaggle submission CSV from public-LB sequences
-    python main.py --config configs/experiments/siamfc_mobile.yaml --mode predict \
+    python main.py --config configs/experiments/random_forest.yaml --mode predict \
                    --output submission.csv
 
     # Quick check — print the resolved config and registered models, then exit
-    python main.py --config configs/experiments/siamfc_mobile.yaml --mode info
+    python main.py --config configs/experiments/random_forest.yaml --mode info
 
 Registered as a console script in pyproject.toml:
     train-tracker = "main:_train_entry"
@@ -133,10 +133,10 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python main.py --config configs/experiments/siamfc_mobile.yaml --mode train\n"
+            "  python main.py --config configs/experiments/random_forest.yaml --mode train\n"
             "  python main.py --config configs/experiments/csrt_baseline.yaml  --mode eval  --split val\n"
-            "  python main.py --config configs/experiments/siamfc_mobile.yaml  --mode predict --output sub.csv\n"
-            "  python main.py --config configs/experiments/siamfc_mobile.yaml  --mode info\n"
+            "  python main.py --config configs/experiments/random_forest.yaml  --mode predict --output sub.csv\n"
+            "  python main.py --config configs/experiments/random_forest.yaml  --mode info\n"
         ),
     )
 
@@ -144,7 +144,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config", "-c",
         required=True,
         metavar="PATH",
-        help="Path to the experiment YAML config, e.g. configs/experiments/siamfc_mobile.yaml",
+        help="Path to the experiment YAML config, e.g. configs/experiments/random_forest.yaml",
     )
     parser.add_argument(
         "--mode", "-m",

@@ -209,3 +209,9 @@ __marimo__/
 /downloads_tmp/
 /downloads_valid/
 /logs/
+
+# wandb
+wandb/
+freezed-models/
+configs/experiments/
+src/models/
