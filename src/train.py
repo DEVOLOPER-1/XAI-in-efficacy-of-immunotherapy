@@ -160,29 +160,31 @@ def _train_neural(
     save_dir      = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
     experiment_id = cfg.get("experiment_name") or "experiment"
     threshold     = training_cfg.get("risk_threshold", None)
+    save_path = save_dir / f"{cfg.wandb.run_name}_weights.pth"
 
     optimiser = torch.optim.AdamW(
-        filter(lambda p: p.requires_grad, model.parameters()),
+        filter(lambda p: p.requires_grad, model._est.parameters()),
         lr=lr, weight_decay=weight_decay,
     )
-    criterion = nn.MSELoss()
+    criterion = nn.HuberLoss(delta=1.0)
 
     best_rmse:     float             = float("inf")
     best_metrics:  dict[str, float]  = {}
-    ckpt_path = save_dir / f"{experiment_id}_best.pth"
 
     log.info("Neural training — epochs: %d | val_every: %d | lr: %g", num_epochs, val_every, lr)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    log.info("Using device: %s", device)
     for epoch in range(1, num_epochs + 1):
-
         # -- Train one epoch -------------------------------------------------
         model.train()
         epoch_losses: list[float] = []
 
         for batch in train_loader:
-            image   = _to_tensor(batch["image"])
-            tabular = _to_tensor(batch["tabular"])
-            target  = _to_tensor(batch["target"])
+            image = _to_tensor(batch["image"]).to(device) if batch["image"] is not None else None
+            tabular = _to_tensor(batch["tabular"]).to(device)
+            target = _to_tensor(batch["target"]).to(device)
 
             # Skip batches where every target is NaN (test/unlabelled patients)
             valid   = ~torch.isnan(target)
@@ -190,9 +192,12 @@ def _train_neural(
                 continue
 
             optimiser.zero_grad()
-            # Mixed-input forward pass: model handles None modalities internally
-            preds = model(image, tabular).squeeze(-1)          # (B,)
-            loss  = criterion(preds[valid], target[valid])
+
+            # Forward pass: preds should be (B,)
+            preds = model(image, tabular).squeeze(-1)
+
+            # Huber Loss handles the valid indices
+            loss = criterion(preds[valid], target[valid])
             loss.backward()
             optimiser.step()
             epoch_losses.append(loss.item())
@@ -221,8 +226,13 @@ def _train_neural(
             if metrics["rmse"] < best_rmse:
                 best_rmse    = metrics["rmse"]
                 best_metrics = metrics
-                save_checkpoint(model, ckpt_path)
+                save_checkpoint(model, save_path)
                 log.info("  ↳ New best RMSE=%.4f — checkpoint saved.", best_rmse)
+
+    if (training_cfg.get('upload_pickled_model', False)):
+        artifact = wandb.Artifact(name="run_weights", type="model")
+        artifact.add_file(str(save_path))
+        run.log_artifact(artifact)
 
     return best_metrics
 
@@ -235,15 +245,17 @@ def _neural_validate(
     """Validate a neural model and return all medical metrics."""
     import torch
 
+    device = next(model.parameters()).device  # Get device from model weights
     model.eval()
+
     all_preds:   list[float] = []
     all_targets: list[float] = []
 
     with torch.no_grad():
         for batch in loader:
-            image   = _to_tensor(batch["image"])
-            tabular = _to_tensor(batch["tabular"])
-            targets = batch["target"]   # numpy (B,), may contain NaN
+            image = _to_tensor(batch["image"]).to(device) if batch["image"] is not None else None
+            tabular = _to_tensor(batch["tabular"]).to(device)
+            targets = batch["target"]
 
             preds = model(image, tabular).squeeze(-1).cpu().numpy()
 

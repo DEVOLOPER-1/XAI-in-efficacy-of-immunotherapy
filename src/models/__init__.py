@@ -39,7 +39,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable, Callable
 
 from src.config import DotDict
 
@@ -96,8 +96,8 @@ def _load_catboost(cfg: DotDict) -> Any:
 
 def _load_tabular_mlp(cfg: DotDict) -> Any:
     try:
-        from src.models.tabular import TabularMLP  # type: ignore[import]
-        return TabularMLP(cfg)
+        from src.models.tabular import DNNCancerRegressor  # type: ignore[import]
+        return DNNCancerRegressor(cfg)
     except ImportError as exc:
         raise ImportError(
             "TabularMLP requires PyTorch: uv pip install torch"
@@ -207,7 +207,7 @@ def _load_late_fusion(cfg: DotDict) -> Any:
 # ⚠ Per STANDARDS §5: registry changes require a PR.
 # ---------------------------------------------------------------------------
 
-_TABULAR_REGISTRY: dict[str, Any] = {
+_TABULAR_REGISTRY: dict[str, Callable] = {
     # -- Linear models --------------------------------------------------
     "lasso_regressor": _load_lasso_regressor,
     # ── Tree models (scikit-learn) ─────────────────────────────────────
@@ -218,7 +218,7 @@ _TABULAR_REGISTRY: dict[str, Any] = {
     # "xgboost":        _load_xgboost,          # TODO: implement XGBoostRegressor
     # "catboost":       _load_catboost,          # TODO: implement CatBoostRegressor
     # ── Neural (not yet implemented) ──────────────────────────────────
-    # "tabular_mlp":    _load_tabular_mlp,       # TODO: implement TabularMLP
+    "tabular_mlp":    _load_tabular_mlp,
 }
 
 _IMAGE_REGISTRY: dict[str, Any] = {

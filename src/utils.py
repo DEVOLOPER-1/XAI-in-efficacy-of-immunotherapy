@@ -208,7 +208,7 @@ def auroc(
     tpr     = tp_cum  / n_pos
     fpr     = fp_cum  / n_neg
 
-    return float(np.trapz(tpr, fpr))
+    return float(np.trapezoid(tpr, fpr))
 
 
 def auprc(
@@ -243,7 +243,7 @@ def auprc(
     precision = tp_cum / np.arange(1, len(yt_sorted) + 1)
     recall    = tp_cum / n_pos
 
-    return float(np.trapz(precision, recall))
+    return float(np.trapezoid(precision, recall))
 
 
 # ---------------------------------------------------------------------------

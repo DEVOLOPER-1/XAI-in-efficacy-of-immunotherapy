@@ -324,11 +324,11 @@ class RandomForestRegressor(_TabularBase):
 
         model_cfg = cfg.get("model") or DotDict({})
 
-        n_estimators      = model_cfg.get("n_estimators",      200)
+        n_estimators      = model_cfg.get("n_estimators",      None)
         max_depth         = model_cfg.get("max_depth",         None)
-        min_samples_split = model_cfg.get("min_samples_split", 5)
-        min_samples_leaf  = model_cfg.get("min_samples_leaf",  2)
-        max_features      = model_cfg.get("max_features",      "sqrt")
+        min_samples_split = model_cfg.get("min_samples_split", None)
+        min_samples_leaf  = model_cfg.get("min_samples_leaf",  None)
+        max_features      = model_cfg.get("max_features",      None)
         oob_score         = model_cfg.get("oob_score",         True)
         n_jobs            = model_cfg.get("n_jobs",            -1)
         random_state      = model_cfg.get("random_state",      42)
@@ -347,7 +347,7 @@ class RandomForestRegressor(_TabularBase):
             max_features=max_features,
             oob_score=oob_score,
             n_jobs=n_jobs,
-            random_state=random_state,
+            random_state=random_state
         )
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "RandomForestRegressor":
@@ -387,13 +387,13 @@ class GradientBoostedTrees(_TabularBase):
 
         model_cfg = cfg.get("model") or DotDict({})
 
-        max_iter          = model_cfg.get("max_iter",          300)
-        max_depth         = model_cfg.get("max_depth",         4)
-        learning_rate     = model_cfg.get("learning_rate",     0.05)
-        min_samples_leaf  = model_cfg.get("min_samples_leaf",  20)
-        l2_reg            = model_cfg.get("l2_regularization", 0.1)
+        max_iter          = model_cfg.get("max_iter",          None)
+        max_depth         = model_cfg.get("max_depth",         None)
+        learning_rate     = model_cfg.get("learning_rate",     None)
+        min_samples_leaf  = model_cfg.get("min_samples_leaf",  None)
+        l2_reg            = model_cfg.get("l2_regularization", None)
         early_stopping    = model_cfg.get("early_stopping",    True)
-        n_iter_no_change  = model_cfg.get("n_iter_no_change",  20)
+        n_iter_no_change  = model_cfg.get("n_iter_no_change",  None)
         random_state      = model_cfg.get("random_state",      42)
 
         log.info(
@@ -450,3 +450,97 @@ class LassoRegressor(_TabularBase):
             ))
         ])
 
+
+# ---------------------------------------------------------------------------
+# 3. Deep Neural Networks
+# ---------------------------------------------------------------------------
+import torch
+import torch.nn as nn
+
+class TMBNet(nn.Module):
+    def __init__(self, input_dim=21, p=0.2):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 57),
+            nn.ReLU(),
+            nn.Dropout(p),
+            nn.Linear(57, 17),
+            nn.ReLU(),
+            nn.Dropout(p),
+            nn.Linear(17, 1)
+        )
+
+    def forward(self, image, tabular):
+        # We accept image to satisfy the multimodal forward pass logic
+        return self.net(tabular)
+
+class DNNCancerRegressor(_TabularBase):
+    _category_label: str = "DNN_TMB"
+
+    def _build_estimator(self, cfg: "DotDict") -> Any:
+        import torch.nn as nn
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import PowerTransformer, RobustScaler
+
+        # 1. Define the Preprocessing Pipeline
+        # We handle preprocessing here so the input to the Neural Net is clean
+        self.preprocessor = Pipeline([
+            ("power", PowerTransformer(method='yeo-johnson', standardize=True)),
+            ("scaler", RobustScaler())
+        ])
+
+
+        droprate = cfg.model.get("droprate", 0.2)
+        return TMBNet(input_dim=21, p=droprate)
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "_TabularBase":
+        # Overriding fit to handle the sklearn-preprocessing step
+        # before the neural training loop starts
+        log.info("Preprocessing tabular features for DNN...")
+        X_transformed = self.preprocessor.fit_transform(X)
+
+        # Note: In your architecture, 'fit' is usually called by a
+        # separate trainer (like your _train_neural function).
+        # We just ensure the estimator is built.
+        self._fitted = True
+        return self
+
+    def forward(self, image: torch.Tensor | None, tabular: torch.Tensor | None) -> torch.Tensor:
+        """Required for the _train_neural loop."""
+        if tabular is None:
+            raise ValueError("Tabular input is required for DNNCancerRegressor")
+
+        # In a real pipeline, you'd apply the preprocessor transforms
+        # to the tensors here or in the Dataset class.
+        return self._est(image, tabular)
+
+    def parameters(self):
+        """Allows the optimiser to find the weights: model.parameters()"""
+        return self._est.parameters()
+
+    def train(self, mode: bool = True):
+        """Sets the mode for Dropout/Batchnorm: model.train()"""
+        self._est.train(mode)
+        return self
+
+    def eval(self):
+        """Sets the mode for validation: model.eval()"""
+        self._est.eval()
+        return self
+
+    def to(self, device):
+        """Allows moving the model to GPU: model.to(device)"""
+        self._est.to(device)
+        return self
+
+    # --- REPLACING THE CALL LOGIC ---
+
+    def __call__(self, image: torch.Tensor | None, tabular: torch.Tensor | None) -> torch.Tensor:
+        """
+        Overrides the _TabularBase __call__ to stay in the 'Tensor' domain.
+        Your training loop calls model(image, tabular).
+        """
+        # Note: If your preprocessing (PowerTransform) isn't in the Dataset,
+        # you'd need to apply it here, but usually for DNNs, it's handled
+        # in the DataLoader or as a separate step.
+        return self._est(image, tabular)

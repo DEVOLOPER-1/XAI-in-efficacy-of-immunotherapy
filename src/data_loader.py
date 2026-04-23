@@ -147,20 +147,20 @@ class TabularStore:
 
         # -- Data Preprocessing -----------------------------------------------
         #     -- Imputation -------------------------------------------------------
-        for col in raw.columns:
-            if pd.api.types.is_numeric_dtype(raw[col]):
-                raw[col] = raw[col].fillna(raw[col].median())
-            else:
-                mode_val = raw[col].mode()
-                raw[col] = raw[col].fillna(
-                    mode_val.iloc[0] if not mode_val.empty else "UNKNOWN"
-                )
-
-        #     -- Categorical encoding ---------------------------------------------
-        for col in raw.select_dtypes(include=["object", "category"]).columns:
-            raw[col] = raw[col].astype("category").cat.codes.astype(float)
-        for col in raw.select_dtypes(include=["bool"]).columns:
-            raw[col] = raw[col].astype(float)
+        # for col in raw.columns:
+        #     if pd.api.types.is_numeric_dtype(raw[col]):
+        #         raw[col] = raw[col].fillna(raw[col].median())
+        #     else:
+        #         mode_val = raw[col].mode()
+        #         raw[col] = raw[col].fillna(
+        #             mode_val.iloc[0] if not mode_val.empty else "UNKNOWN"
+        #         )
+        #
+        # #     -- Categorical encoding ---------------------------------------------
+        # for col in raw.select_dtypes(include=["object", "category"]).columns:
+        #     raw[col] = raw[col].astype("category").cat.codes.astype(float)
+        # for col in raw.select_dtypes(include=["bool"]).columns:
+        #     raw[col] = raw[col].astype(float)
 
         self._features: pd.DataFrame = raw.astype(np.float32)
 
