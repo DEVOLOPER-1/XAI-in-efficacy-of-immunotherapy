@@ -25,13 +25,13 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
-
+import sys
 
 # ---------------------------------------------------------------------------
 # Logging setup — configure before any src imports so handlers are ready
 # ---------------------------------------------------------------------------
+
 
 def _setup_logging(level: str = "INFO") -> None:
     logging.basicConfig(
@@ -45,6 +45,7 @@ def _setup_logging(level: str = "INFO") -> None:
 # ---------------------------------------------------------------------------
 # Mode handlers
 # ---------------------------------------------------------------------------
+
 
 def _mode_train(cfg_path: str, args: argparse.Namespace) -> None:
     """Train a tracker using the given experiment config."""
@@ -73,7 +74,7 @@ def _mode_eval(cfg_path: str, args: argparse.Namespace) -> None:
     from src.config import load_config
     from src.inference import evaluate
 
-    cfg   = load_config(cfg_path)
+    cfg = load_config(cfg_path)
     split = args.split or "val"
     logging.getLogger(__name__).info(
         "Mode: EVAL | Config: %s | Split: %s", cfg_path, split
@@ -91,27 +92,27 @@ def _mode_predict(cfg_path: str, args: argparse.Namespace) -> None:
     from src.config import load_config
     from src.inference import predict
 
-    cfg         = load_config(cfg_path)
+    cfg = load_config(cfg_path)
     output_path = args.output or "submission.csv"
-    split       = args.split or "public_lb"
+    split = args.split or "public_lb"
 
     logging.getLogger(__name__).info(
         "Mode: PREDICT | Config: %s | Split: %s | Output: %s",
-        cfg_path, split, output_path,
+        cfg_path,
+        split,
+        output_path,
     )
     written = predict(cfg, split=split, output_path=output_path)
     print(f"\n  ✓ Submission written → {written}")
-    print(
-        f"  Submit with: make submit FILE={written} "
-        f'MSG="{Path(cfg_path).stem}"\n'
-    )
+    print(f'  Submit with: make submit FILE={written} MSG="{Path(cfg_path).stem}"\n')
 
 
 def _mode_info(cfg_path: str, _args: argparse.Namespace) -> None:
     """Print the resolved merged config and the list of registered models."""
+    import json
+
     from src.config import load_config
     from src.models import list_models
-    import json
 
     cfg = load_config(cfg_path)
     print("\n── Resolved Config ──────────────────────────────────")
@@ -125,6 +126,7 @@ def _mode_info(cfg_path: str, _args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -141,13 +143,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--config", "-c",
+        "--config",
+        "-c",
         required=True,
         metavar="PATH",
         help="Path to the experiment YAML config, e.g. configs/experiments/random_forest.yaml",
     )
     parser.add_argument(
-        "--mode", "-m",
+        "--mode",
+        "-m",
         choices=["train", "eval", "predict", "info"],
         default="train",
         help="Execution mode (default: train)",
@@ -163,7 +167,8 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         metavar="FILE",
         default=None,
         help="Output path for submission CSV (predict mode only, default: submission.csv)",
@@ -182,9 +187,10 @@ def _build_parser() -> argparse.ArgumentParser:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args   = parser.parse_args(argv)
+    args = parser.parse_args(argv)
 
     _setup_logging(args.log_level)
     log = logging.getLogger(__name__)
@@ -195,10 +201,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     mode_dispatch = {
-        "train":   _mode_train,
-        "eval":    _mode_eval,
+        "train": _mode_train,
+        "eval": _mode_eval,
         "predict": _mode_predict,
-        "info":    _mode_info,
+        "info": _mode_info,
     }
 
     try:
@@ -219,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
 # ---------------------------------------------------------------------------
 # pyproject.toml console-script entry points
 # ---------------------------------------------------------------------------
+
 
 def _train_entry() -> None:
     """Entrypoint for `train-tracker` CLI alias (defaults to --mode train)."""

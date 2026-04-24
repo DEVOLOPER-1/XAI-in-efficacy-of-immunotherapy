@@ -28,8 +28,8 @@ Usage (called from main.py):
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,7 @@ log = logging.getLogger(__name__)
 # W&B initialisation (unchanged from original standards)
 # ---------------------------------------------------------------------------
 
+
 def _init_wandb(cfg: DotDict) -> Any:
     """Initialise W&B run and log the full merged config as hyperparameters."""
     try:
@@ -60,11 +61,13 @@ def _init_wandb(cfg: DotDict) -> Any:
     wandb_cfg = cfg.get("wandb") or DotDict({})
     run = wandb.init(
         project=wandb_cfg.get("project", "TMB-prediction"),
-        entity=wandb_cfg.get("entity",   "mohamed-mourad-zewail-city"),
-        name=wandb_cfg.get("run_name",
-                           f"{datetime.now()}-{cfg.model.type}"),
-        tags=wandb_cfg.get("tags",       []) + ["success",],
-        config=cfg.to_dict(),   # full merged config as hyperparameters — reproducible
+        entity=wandb_cfg.get("entity", "mohamed-mourad-zewail-city"),
+        name=wandb_cfg.get("run_name", f"{datetime.now()}-{cfg.model.type}"),
+        tags=wandb_cfg.get("tags", [])
+        + [
+            "success",
+        ],
+        config=cfg.to_dict(),  # full merged config as hyperparameters — reproducible
     )
     log.info("W&B run initialised: %s", run.url)
     return run
@@ -73,6 +76,7 @@ def _init_wandb(cfg: DotDict) -> Any:
 # ---------------------------------------------------------------------------
 # Backend detection helper
 # ---------------------------------------------------------------------------
+
 
 def _is_tree_model(cfg: DotDict) -> bool:
     """Return True for tree-based models that use fit() instead of forward()."""
@@ -84,13 +88,14 @@ def _is_tree_model(cfg: DotDict) -> bool:
         "lasso_regressor",
         "gradient_boosted",
     }
-    model_cfg  = cfg.get("model") or DotDict({})
+    model_cfg = cfg.get("model") or DotDict({})
     return (model_cfg.get("type") or "").lower() in tree_types
 
 
 # ---------------------------------------------------------------------------
 # Main training entry point
 # ---------------------------------------------------------------------------
+
 
 def train(cfg: DotDict) -> dict[str, float]:
     """Run the full training loop for the given experiment config.
@@ -110,16 +115,18 @@ def train(cfg: DotDict) -> dict[str, float]:
     log.info(
         "Building model — category: %s | type: %s",
         model_cfg.get("category", "?"),
-        model_cfg.get("type",     "?"),
+        model_cfg.get("type", "?"),
     )
     model = get_model(cfg)
 
     # ── 3. Data ───────────────────────────────────────────────────────────────
     from src.data_loader import build_dataloaders
+
     train_loader, val_loader = build_dataloaders(cfg)
     log.info(
         "Data ready — train: %d batches | val: %d batches",
-        len(train_loader), len(val_loader),
+        len(train_loader),
+        len(val_loader),
     )
 
     # ── 4. Dispatch to correct training regime ───────────────────────────────
@@ -141,58 +148,64 @@ def train(cfg: DotDict) -> dict[str, float]:
 # Neural network training (PyTorch gradient descent)
 # ---------------------------------------------------------------------------
 
+
 def _train_neural(
-    model:        Any,
+    model: Any,
     train_loader: Any,
-    val_loader:   Any,
-    cfg:          DotDict,
-    run:          Any,
+    val_loader: Any,
+    cfg: DotDict,
+    run: Any,
 ) -> dict[str, float]:
     """Train a PyTorch model with AdamW and MSE loss."""
     import torch
     import torch.nn as nn
 
-    training_cfg  = cfg.get("training") or DotDict({})
-    num_epochs    = training_cfg.get("epochs",       100)
-    val_every     = training_cfg.get("val_every",      5)
-    lr            = training_cfg.get("lr",           1e-3)
-    weight_decay  = training_cfg.get("weight_decay", 1e-4)
-    save_dir      = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
+    training_cfg = cfg.get("training") or DotDict({})
+    num_epochs = training_cfg.get("epochs", 100)
+    val_every = training_cfg.get("val_every", 5)
+    lr = training_cfg.get("lr", 1e-3)
+    weight_decay = training_cfg.get("weight_decay", 1e-4)
+    save_dir = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
     experiment_id = cfg.get("experiment_name") or "experiment"
-    threshold     = training_cfg.get("risk_threshold", None)
+    threshold = training_cfg.get("risk_threshold", None)
 
     optimiser = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
-        lr=lr, weight_decay=weight_decay,
+        lr=lr,
+        weight_decay=weight_decay,
     )
     criterion = nn.MSELoss()
 
-    best_rmse:     float             = float("inf")
-    best_metrics:  dict[str, float]  = {}
+    best_rmse: float = float("inf")
+    best_metrics: dict[str, float] = {}
     ckpt_path = save_dir / f"{experiment_id}_best.pth"
 
-    log.info("Neural training — epochs: %d | val_every: %d | lr: %g", num_epochs, val_every, lr)
+    log.info(
+        "Neural training — epochs: %d | val_every: %d | lr: %g",
+        num_epochs,
+        val_every,
+        lr,
+    )
 
     for epoch in range(1, num_epochs + 1):
-
         # -- Train one epoch -------------------------------------------------
         model.train()
         epoch_losses: list[float] = []
 
         for batch in train_loader:
-            image   = _to_tensor(batch["image"])
+            image = _to_tensor(batch["image"])
             tabular = _to_tensor(batch["tabular"])
-            target  = _to_tensor(batch["target"])
+            target = _to_tensor(batch["target"])
 
             # Skip batches where every target is NaN (test/unlabelled patients)
-            valid   = ~torch.isnan(target)
+            valid = ~torch.isnan(target)
             if valid.sum() == 0:
                 continue
 
             optimiser.zero_grad()
             # Mixed-input forward pass: model handles None modalities internally
-            preds = model(image, tabular).squeeze(-1)          # (B,)
-            loss  = criterion(preds[valid], target[valid])
+            preds = model(image, tabular).squeeze(-1)  # (B,)
+            loss = criterion(preds[valid], target[valid])
             loss.backward()
             optimiser.step()
             epoch_losses.append(loss.item())
@@ -205,21 +218,29 @@ def _train_neural(
 
             log.info(
                 "Epoch %d/%d — train_loss: %.4f | RMSE: %.4f | R²: %.4f | C-Index: %.4f",
-                epoch, num_epochs, mean_loss,
-                metrics["rmse"], metrics["r2"], metrics["c_index"],
+                epoch,
+                num_epochs,
+                mean_loss,
+                metrics["rmse"],
+                metrics["r2"],
+                metrics["c_index"],
             )
 
             # Log to W&B only at validation steps (bandwidth-conscious)
             if run is not None:
                 import wandb
+
                 wandb.log(
-                    {"epoch": epoch, "train/loss": mean_loss,
-                     **{f"val/{k}": v for k, v in metrics.items()}},
+                    {
+                        "epoch": epoch,
+                        "train/loss": mean_loss,
+                        **{f"val/{k}": v for k, v in metrics.items()},
+                    },
                     step=epoch,
                 )
 
             if metrics["rmse"] < best_rmse:
-                best_rmse    = metrics["rmse"]
+                best_rmse = metrics["rmse"]
                 best_metrics = metrics
                 save_checkpoint(model, ckpt_path)
                 log.info("  ↳ New best RMSE=%.4f — checkpoint saved.", best_rmse)
@@ -228,22 +249,22 @@ def _train_neural(
 
 
 def _neural_validate(
-    model:     Any,
-    loader:    Any,
+    model: Any,
+    loader: Any,
     threshold: float | None = None,
 ) -> dict[str, float]:
     """Validate a neural model and return all medical metrics."""
     import torch
 
     model.eval()
-    all_preds:   list[float] = []
+    all_preds: list[float] = []
     all_targets: list[float] = []
 
     with torch.no_grad():
         for batch in loader:
-            image   = _to_tensor(batch["image"])
+            image = _to_tensor(batch["image"])
             tabular = _to_tensor(batch["tabular"])
-            targets = batch["target"]   # numpy (B,), may contain NaN
+            targets = batch["target"]  # numpy (B,), may contain NaN
 
             preds = model(image, tabular).squeeze(-1).cpu().numpy()
 
@@ -261,6 +282,7 @@ def _to_tensor(array: "np.ndarray | None") -> "Any":
         return None
     try:
         import torch
+
         return torch.from_numpy(array).float()
     except ImportError:
         return array
@@ -270,12 +292,13 @@ def _to_tensor(array: "np.ndarray | None") -> "Any":
 # Tree-based model training (XGBoost / CatBoost)
 # ---------------------------------------------------------------------------
 
+
 def _train_tree(
-    model:        Any,
+    model: Any,
     train_loader: Any,
-    val_loader:   Any,
-    cfg:          DotDict,
-    run:          Any,
+    val_loader: Any,
+    cfg: DotDict,
+    run: Any,
 ) -> dict[str, float]:
     """Accumulate all tabular batches and call model.fit() in one shot.
 
@@ -285,7 +308,7 @@ def _train_tree(
     log.info("Tree model training — collecting batches…")
 
     X_train, y_train = _collect_tabular(train_loader)
-    X_val,   y_val   = _collect_tabular(val_loader)
+    X_val, y_val = _collect_tabular(val_loader)
 
     if X_train is None or y_train is None:
         raise RuntimeError(
@@ -296,15 +319,19 @@ def _train_tree(
     log.info("Fitting tree model on %d training patients…", len(y_train))
     model.fit(X_train, y_train)
 
-    preds   = model.predict(X_val)
+    preds = model.predict(X_val)
     metrics = compute_all_metrics(y_val.tolist(), preds.tolist())
 
     log.info(
         "Tree model — RMSE: %.4f | R²: %.4f | C-Index: %.4f",
-        metrics["rmse"], metrics["r2"], metrics["c_index"],
+        metrics["rmse"],
+        metrics["r2"],
+        metrics["c_index"],
     )
 
-    if hasattr(model, "print_feature_importances") and callable(model.print_feature_importances):
+    if hasattr(model, "print_feature_importances") and callable(
+        model.print_feature_importances
+    ):
         model.print_feature_importances(
             feature_names=train_loader.feature_names,
             top_n=cfg.model.select_top_k,
@@ -314,19 +341,19 @@ def _train_tree(
 
     if run is not None:
         import wandb
+
         wandb.log({f"val/{k}": v for k, v in metrics.items()})
 
         # Save checkpoint
-        training_cfg  = cfg.get("training") or DotDict({})
-        save_dir      = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
+        training_cfg = cfg.get("training") or DotDict({})
+        save_dir = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
         run_name = cfg.wandb.get("run_name") or "experiment"
         save_checkpoint(model, save_dir / f"{run_name}_weights.pkl")
 
-        if (training_cfg.get('upload_pickled_model', False)):
+        if training_cfg.get("upload_pickled_model", False):
             artifact = wandb.Artifact(name=f"{run_name}_weights", type="model")
             artifact.add_file(str(save_dir / f"{run_name}_weights.pkl"))
             run.log_artifact(artifact)
-
 
     return metrics
 
@@ -368,4 +395,6 @@ def _collect_tabular(
     if not X_parts:
         return None, None
 
-    return np.concatenate(X_parts, axis=0), np.concatenate(y_parts, axis=0).astype(np.float32)
+    return np.concatenate(X_parts, axis=0), np.concatenate(y_parts, axis=0).astype(
+        np.float32
+    )

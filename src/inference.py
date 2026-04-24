@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import csv
 import logging
-import time
 from pathlib import Path
 from typing import Any
 
@@ -35,13 +34,13 @@ from src.config import DotDict
 from src.models import get_model
 from src.utils import (
     compute_all_scores,
+    compute_s_acc,
     measure_cpu_latency,
     measure_flops,
     measure_model_size,
     measure_params,
     norm_precision,
     success_auc,
-    compute_s_acc,
 )
 
 log = logging.getLogger(__name__)
@@ -50,6 +49,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Core online-tracking engine
 # ---------------------------------------------------------------------------
+
 
 def _run_sequence_online(
     tracker: Any,
@@ -93,6 +93,7 @@ def _run_sequence_online(
 # Evaluation (annotated sequences)
 # ---------------------------------------------------------------------------
 
+
 def evaluate(cfg: DotDict, split: str = "val") -> dict[str, float]:
     """Run online evaluation on annotated sequences and compute all scores.
 
@@ -113,17 +114,20 @@ def evaluate(cfg: DotDict, split: str = "val") -> dict[str, float]:
     # Load weights if a checkpoint path is given
     ckpt_path = cfg.get("eval", None)
     if ckpt_path:
-        ckpt_path = ckpt_path.get("checkpoint", None) if hasattr(ckpt_path, "get") else None
+        ckpt_path = (
+            ckpt_path.get("checkpoint", None) if hasattr(ckpt_path, "get") else None
+        )
     if ckpt_path:
         _load_checkpoint(tracker, Path(ckpt_path))
 
     # -- Load sequences ------------------------------------------------------
     from src.data_loader import load_sequences  # type: ignore[import]
+
     sequences = load_sequences(cfg, split=split)
     log.info("Loaded %d sequences for evaluation.", len(sequences))
 
     all_preds: list[tuple[int, int, int, int]] = []
-    all_gts:   list[tuple[int, int, int, int]] = []
+    all_gts: list[tuple[int, int, int, int]] = []
     sample_frame: "np.ndarray | None" = None
 
     # -- Run online tracking on each sequence --------------------------------
@@ -145,13 +149,15 @@ def evaluate(cfg: DotDict, split: str = "val") -> dict[str, float]:
             sample_frame = frames[1]
 
     # -- Accuracy metrics ----------------------------------------------------
-    auc       = success_auc(all_preds, all_gts)
+    auc = success_auc(all_preds, all_gts)
     norm_prec = norm_precision(all_preds, all_gts)
-    s_acc     = compute_s_acc(auc, norm_prec)
+    s_acc = compute_s_acc(auc, norm_prec)
 
     log.info(
         "Accuracy — AUC: %.4f | NormPrecision: %.4f | S_acc: %.4f",
-        auc, norm_prec, s_acc,
+        auc,
+        norm_prec,
+        s_acc,
     )
 
     # -- Efficiency metrics (CPU latency is mandatory) -----------------------
@@ -160,30 +166,38 @@ def evaluate(cfg: DotDict, split: str = "val") -> dict[str, float]:
 
     log.info("Measuring CPU latency…")
     latency_ms = measure_cpu_latency(tracker, sample_frame)
-    flops_g    = measure_flops(getattr(tracker, "model", tracker))
-    params_m   = measure_params(getattr(tracker, "model", tracker))
+    flops_g = measure_flops(getattr(tracker, "model", tracker))
+    params_m = measure_params(getattr(tracker, "model", tracker))
 
     # Model size from checkpoint; fall back to 0.0 for classical trackers
     training_cfg = cfg.get("training") or DotDict({})
     experiment_id = cfg.get("experiment_name") or cfg.model.type
     save_dir = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
-    size_gb  = measure_model_size(save_dir / f"{experiment_id}_best.pth")
+    size_gb = measure_model_size(save_dir / f"{experiment_id}_best.pth")
 
     log.info(
         "Efficiency — Latency: %.1f ms | FLOPs: %.2f G | Params: %.2f M | Size: %.3f GB",
-        latency_ms, flops_g, params_m, size_gb,
+        latency_ms,
+        flops_g,
+        params_m,
+        size_gb,
     )
 
     # -- Combine into final leaderboard row ----------------------------------
     scores = compute_all_scores(
-        auc=auc, norm_prec=norm_prec,
-        flops_g=flops_g, params_m=params_m,
-        latency_ms=latency_ms, size_gb=size_gb,
+        auc=auc,
+        norm_prec=norm_prec,
+        flops_g=flops_g,
+        params_m=params_m,
+        latency_ms=latency_ms,
+        size_gb=size_gb,
     )
 
     log.info(
         "Final Score: %.4f  (S_acc=%.4f, S_eff=%.4f)",
-        scores["final_score"], scores["s_acc"], scores["s_eff"],
+        scores["final_score"],
+        scores["s_acc"],
+        scores["s_eff"],
     )
 
     return scores
@@ -192,6 +206,7 @@ def evaluate(cfg: DotDict, split: str = "val") -> dict[str, float]:
 # ---------------------------------------------------------------------------
 # Prediction (unannotated public-LB sequences → submission CSV)
 # ---------------------------------------------------------------------------
+
 
 def predict(
     cfg: DotDict,
@@ -220,12 +235,15 @@ def predict(
 
     ckpt_path = cfg.get("eval", None)
     if ckpt_path:
-        ckpt_path = ckpt_path.get("checkpoint", None) if hasattr(ckpt_path, "get") else None
+        ckpt_path = (
+            ckpt_path.get("checkpoint", None) if hasattr(ckpt_path, "get") else None
+        )
     if ckpt_path:
         _load_checkpoint(tracker, Path(ckpt_path))
 
     # -- Load sequences (no annotations in public-LB split) ------------------
     from src.data_loader import load_sequences  # type: ignore[import]
+
     sequences = load_sequences(cfg, split=split)
     log.info("Loaded %d sequences for prediction.", len(sequences))
 
@@ -241,21 +259,29 @@ def predict(
 
         # Frame 0 uses the provided init bbox directly (no prediction needed)
         init_bbox = init_bboxes[0]
-        rows.append({
-            "id": f"{seq_id}_0",
-            "x": init_bbox[0], "y": init_bbox[1],
-            "w": init_bbox[2], "h": init_bbox[3],
-        })
+        rows.append(
+            {
+                "id": f"{seq_id}_0",
+                "x": init_bbox[0],
+                "y": init_bbox[1],
+                "w": init_bbox[2],
+                "h": init_bbox[3],
+            }
+        )
 
         # Online tracking for frames 1..N
         tracker.init(frames[0], init_bbox)
         for frame_idx in range(1, len(frames)):
             pred = tracker.update(frames[frame_idx])
-            rows.append({
-                "id": f"{seq_id}_{frame_idx}",
-                "x": pred[0], "y": pred[1],
-                "w": pred[2], "h": pred[3],
-            })
+            rows.append(
+                {
+                    "id": f"{seq_id}_{frame_idx}",
+                    "x": pred[0],
+                    "y": pred[1],
+                    "w": pred[2],
+                    "h": pred[3],
+                }
+            )
 
     with open(output_path, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=["id", "x", "y", "w", "h"])
@@ -270,6 +296,7 @@ def predict(
 # Checkpoint loader
 # ---------------------------------------------------------------------------
 
+
 def _load_checkpoint(tracker: Any, path: Path) -> None:
     """Load weights into a tracker from a checkpoint file.
 
@@ -281,6 +308,7 @@ def _load_checkpoint(tracker: Any, path: Path) -> None:
 
     try:
         import torch  # type: ignore[import]
+
         if hasattr(tracker, "load_state_dict"):
             state = torch.load(path, map_location="cpu", weights_only=True)
             tracker.load_state_dict(state)
@@ -290,6 +318,7 @@ def _load_checkpoint(tracker: Any, path: Path) -> None:
         pass
 
     import pickle
+
     with open(path, "rb") as fh:
         loaded = pickle.load(fh)
     # For classical models the checkpoint IS the model; copy its state.

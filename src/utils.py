@@ -17,8 +17,8 @@ removed — the cancer research task has no efficiency budget constraint.
 from __future__ import annotations
 
 import logging
-import pickle
 from pathlib import Path
+import pickle
 from typing import Any, Sequence
 
 import numpy as np
@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Core regression metrics
 # ---------------------------------------------------------------------------
+
 
 def rmse(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
     """Root Mean Squared Error — primary regression metric.
@@ -78,7 +79,7 @@ def r2_score(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
     ss_res = np.sum((yt - yp) ** 2)
     ss_tot = np.sum((yt - np.mean(yt)) ** 2)
     if ss_tot == 0.0:
-        return float("nan")     # target has zero variance — metric undefined
+        return float("nan")  # target has zero variance — metric undefined
     return float(1.0 - ss_res / ss_tot)
 
 
@@ -99,6 +100,7 @@ def pearson_r(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
 # ---------------------------------------------------------------------------
 # Survival-specific metric
 # ---------------------------------------------------------------------------
+
 
 def concordance_index(
     durations: Sequence[float],
@@ -128,7 +130,7 @@ def concordance_index(
         cohort sizes (<10 000 patients). For large datasets, use lifelines:
             from lifelines.utils import concordance_index as lifelines_ci
     """
-    d = np.array(durations,   dtype=np.float64)
+    d = np.array(durations, dtype=np.float64)
     p = np.array(predictions, dtype=np.float64)
 
     if events is None:
@@ -140,9 +142,9 @@ def concordance_index(
     mask = ~(np.isnan(d) | np.isnan(p))
     d, p, e = d[mask], p[mask], e[mask]
 
-    concordant   = 0
-    discordant   = 0
-    tied_risk    = 0
+    concordant = 0
+    discordant = 0
+    tied_risk = 0
 
     for i in range(len(d)):
         if e[i] == 0:
@@ -171,6 +173,7 @@ def concordance_index(
 # Binary / threshold metrics (useful for high-risk / low-risk stratification)
 # ---------------------------------------------------------------------------
 
+
 def auroc(
     y_true: Sequence[int],
     y_score: Sequence[float],
@@ -184,7 +187,7 @@ def auroc(
     Returns:
         AUROC in [0, 1]. 0.5 = random. 1.0 = perfect.
     """
-    yt = np.array(y_true,  dtype=np.int8)
+    yt = np.array(y_true, dtype=np.int8)
     ys = np.array(y_score, dtype=np.float64)
 
     mask = ~np.isnan(ys)
@@ -195,18 +198,18 @@ def auroc(
         return float("nan")
 
     # Trapezoidal AUROC via sorting
-    order     = np.argsort(-ys)        # descending by score
+    order = np.argsort(-ys)  # descending by score
     yt_sorted = yt[order]
-    n_pos     = yt_sorted.sum()
-    n_neg     = len(yt_sorted) - n_pos
+    n_pos = yt_sorted.sum()
+    n_neg = len(yt_sorted) - n_pos
 
     if n_pos == 0 or n_neg == 0:
         return float("nan")
 
-    tp_cum  = np.cumsum(yt_sorted)
-    fp_cum  = np.cumsum(1 - yt_sorted)
-    tpr     = tp_cum  / n_pos
-    fpr     = fp_cum  / n_neg
+    tp_cum = np.cumsum(yt_sorted)
+    fp_cum = np.cumsum(1 - yt_sorted)
+    tpr = tp_cum / n_pos
+    fpr = fp_cum / n_neg
 
     return float(np.trapz(tpr, fpr))
 
@@ -226,22 +229,22 @@ def auprc(
     Returns:
         AUPRC in [0, 1].
     """
-    yt = np.array(y_true,  dtype=np.int8)
+    yt = np.array(y_true, dtype=np.int8)
     ys = np.array(y_score, dtype=np.float64)
 
     mask = ~np.isnan(ys)
     yt, ys = yt[mask], ys[mask]
 
-    order     = np.argsort(-ys)
+    order = np.argsort(-ys)
     yt_sorted = yt[order]
-    n_pos     = yt_sorted.sum()
+    n_pos = yt_sorted.sum()
 
     if n_pos == 0:
         return float("nan")
 
-    tp_cum   = np.cumsum(yt_sorted)
+    tp_cum = np.cumsum(yt_sorted)
     precision = tp_cum / np.arange(1, len(yt_sorted) + 1)
-    recall    = tp_cum / n_pos
+    recall = tp_cum / n_pos
 
     return float(np.trapz(precision, recall))
 
@@ -250,11 +253,12 @@ def auprc(
 # Omnibus metric dict — used by train.py and W&B logging
 # ---------------------------------------------------------------------------
 
+
 def compute_all_metrics(
-    y_true:    Sequence[float],
-    y_pred:    Sequence[float],
-    events:    Sequence[int] | None = None,
-    threshold: float | None        = None,
+    y_true: Sequence[float],
+    y_pred: Sequence[float],
+    events: Sequence[int] | None = None,
+    threshold: float | None = None,
 ) -> dict[str, float]:
     """Compute and return all relevant metrics in a single call.
 
@@ -272,11 +276,11 @@ def compute_all_metrics(
         If threshold is given, also: auroc, auprc.
     """
     metrics: dict[str, float] = {
-        "rmse":      rmse(y_true, y_pred),
-        "mae":       mae(y_true, y_pred),
-        "r2":        r2_score(y_true, y_pred),
+        "rmse": rmse(y_true, y_pred),
+        "mae": mae(y_true, y_pred),
+        "r2": r2_score(y_true, y_pred),
         "pearson_r": pearson_r(y_true, y_pred),
-        "c_index":   concordance_index(y_true, y_pred, events),
+        "c_index": concordance_index(y_true, y_pred, events),
     }
 
     if threshold is not None:
@@ -292,11 +296,12 @@ def compute_all_metrics(
 # Cross-validation split
 # ---------------------------------------------------------------------------
 
+
 def stratified_kfold_splits(
     patient_ids: list[str],
-    y:           Sequence[float],
-    n_splits:    int = 5,
-    seed:        int = 42,
+    y: Sequence[float],
+    n_splits: int = 5,
+    seed: int = 42,
 ) -> list[tuple[list[str], list[str]]]:
     """Stratified K-Fold splits by target quantile (for regression).
 
@@ -316,9 +321,9 @@ def stratified_kfold_splits(
     y_arr = np.array(y, dtype=np.float64)
 
     # Bin into quartiles for stratification; NaN patients go into their own bin
-    n_bins   = min(4, len(np.unique(y_arr[~np.isnan(y_arr)])))
-    bins     = np.nanquantile(y_arr, np.linspace(0, 1, n_bins + 1))
-    strata   = np.digitize(y_arr, bins[1:-1])   # 0 … n_bins-1
+    n_bins = min(4, len(np.unique(y_arr[~np.isnan(y_arr)])))
+    bins = np.nanquantile(y_arr, np.linspace(0, 1, n_bins + 1))
+    strata = np.digitize(y_arr, bins[1:-1])  # 0 … n_bins-1
 
     # Collect indices per stratum
     strata_map: dict[int, list[int]] = {}
@@ -337,9 +342,9 @@ def stratified_kfold_splits(
 
     splits: list[tuple[list[str], list[str]]] = []
     for fold in range(n_splits):
-        val_idx   = set(fold_indices[fold])
+        val_idx = set(fold_indices[fold])
         train_idx = [i for i in range(len(patient_ids)) if i not in val_idx]
-        val_list  = [patient_ids[i] for i in fold_indices[fold]]
+        val_list = [patient_ids[i] for i in fold_indices[fold]]
         train_list = [patient_ids[i] for i in train_idx]
         splits.append((train_list, val_list))
 
@@ -350,9 +355,10 @@ def stratified_kfold_splits(
 # Result CSV helpers (leaderboard format)
 # ---------------------------------------------------------------------------
 
+
 def save_predictions(
     patient_ids: list[str],
-    y_pred:      Sequence[float],
+    y_pred: Sequence[float],
     output_path: str | Path,
 ) -> Path:
     """Save predictions to a CSV in leaderboard/submission format.
@@ -389,6 +395,7 @@ def save_predictions(
 # Checkpoint helpers
 # ---------------------------------------------------------------------------
 
+
 def save_checkpoint(model: Any, path: str | Path) -> None:
     """Save a model checkpoint. Handles both torch and sklearn-style models.
 
@@ -404,6 +411,7 @@ def save_checkpoint(model: Any, path: str | Path) -> None:
 
     try:
         import torch
+
         if hasattr(model, "state_dict"):
             torch.save(model.state_dict(), path)
             log.info("Torch checkpoint saved → %s", path)
@@ -433,6 +441,7 @@ def load_checkpoint(model: Any, path: str | Path) -> Any:
 
     try:
         import torch
+
         if hasattr(model, "load_state_dict"):
             state = torch.load(path, map_location="cpu", weights_only=True)
             model.load_state_dict(state)
@@ -450,6 +459,7 @@ def load_checkpoint(model: Any, path: str | Path) -> Any:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _clean_pairs(
     y_true: Sequence[float],
