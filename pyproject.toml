@@ -1,41 +1,27 @@
 [project]
-name = "ICMTC-AIC4-2026-Zerone"
+name = "dsai-305-xai"
 version = "0.1.0"
-description = "An Aerial Vision Challenge: Advancing real-time single-object tracking in dynamic drone-captured environments"
+description = "Explainable AI — DSAI 305 course project"
 readme = "README.md"
-requires-python = ">=3.13"
-authors = [
-    { name = "Team Zerone", email = "" }
-]
-keywords = ["single-object-tracking", "UAV", "aerial-vision", "real-time"]
-
-# ── CORE RUNTIME DEPENDENCIES ──────────────────────────────────────────────────
-
+requires-python = ">=3.12"
 dependencies = [
-    # Vision & numerics
-    "numpy>=1.26",
-    "opencv-python-headless>=4.9",   # headless = no Qt/X11 (Docker-safe)
-    "scipy>=1.13",                   # AUC integration, bbox utilities
-
-    # Config-driven architecture
-    "pyyaml>=6.0",
-    "cookiecutter>=2.6",             # Bootstrap new member folders
-
-    # Experiment tracking
-    "wandb>=0.17",
-
-    # Progress + logging
-    "tqdm>=4.66",
-    "rich>=13.7",                    # Pretty console tables for metric summaries
-
-    # Data handling
-    "pandas>=2.2",
-    "polars>=0.20",
-
-    # Needed
-    "kaggle>=1.6",
-    "ruff>=0.9.0",
-
+    "beautifulsoup4>=4.14.3",
+    "ipykernel>=7.2.0",
+    "lime>=0.2.0.1",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.4",
+    "opencv-python>=4.13.0.92",
+    "openslide-python>=1.4.3",
+    "pillow>=12.2.0",
+    "playwright>=1.58.0",
+    "polars>=1.38.1",
+    "pyarrow>=23.0.1",
+    "scikit-image>=0.26.0",
+    "scikit-learn>=1.8.0",
+    "seaborn>=0.13.2",
+    "shap>=0.51.0",
+    "tensorflow>=2.21.0",
+    "tqdm>=4.67.3",
 ]
 
 # ── OPTIONAL DEPENDENCY GROUPS ─────────────────────────────────────────────────
@@ -58,9 +44,7 @@ profiling = [
 
 # Developer tooling — one-time install, not needed on every machine
 dev = [
-    "pre-commit>=3.7",
-    "ipykernel>=6.29",
-    "jupyter>=1.0",
+    "ruff>=0.15.4",
 ]
 
 
@@ -91,10 +75,12 @@ select = [
     "W",
     "F",
     "I",
+    "UP",
     "B",
     "C4",
     "UP",
     "SIM",
+    "TID",
     "RUF",
     "N",
     "PTH",
@@ -108,6 +94,19 @@ ignore = [
     "N806",
     "N812",
 ]
+
+fixable   = ["ALL"]
+unfixable = []
+
+exclude = [
+    ".venv",
+    "__pycache__",
+    "downloads_valid",
+    "downloads_tmp",
+    "downloads_bad",
+    "logs",
+]
+
 
 [tool.ruff.lint.per-file-ignores]
 "members/**"    = ["E402", "F401", "ERA001", "B018"]  # exploratory notebooks
