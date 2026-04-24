@@ -215,6 +215,11 @@ wandb/
 freezed-models/
 configs/experiments/
 src/models/
-/data/processed/tiles/
-/QuPath-v0.7.0-Linux/
+
+
+# Project-specific large assets and generated artifacts
 /data/
+/QuPath-v0.7.0-Linux/
+
+# Model weights/checkpoints
+*.h5
