@@ -3,71 +3,67 @@ name = "dsai-305-xai"
 version = "0.1.0"
 description = "Explainable AI — DSAI 305 course project"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
+
 dependencies = [
-    "beautifulsoup4>=4.14.3",
-    "ipykernel>=7.2.0",
+    "beautifulsoup4>=4.12.0",
+    "ipykernel>=6.29.0",
     "lime>=0.2.0.1",
-    "matplotlib>=3.10.8",
-    "numpy>=2.4.4",
-    "opencv-python>=4.13.0.92",
-    "openslide-python>=1.4.3",
-    "pillow>=12.2.0",
-    "playwright>=1.58.0",
-    "polars>=1.38.1",
-    "pyarrow>=23.0.1",
-    "scikit-image>=0.26.0",
-    "scikit-learn>=1.8.0",
-    "seaborn>=0.13.2",
-    "shap>=0.51.0",
-    "tensorflow>=2.21.0",
-    "tqdm>=4.67.3",
+    "matplotlib>=3.8.0",
+    "numpy>=1.26.0",
+    "opencv-python>=4.9.0.80",
+    "openslide-python>=1.3.1",
+    "pillow>=10.2.0",
+    "playwright>=1.40.0",
+    "polars>=0.20.0",
+    "pyarrow>=14.0.0",
+    "scikit-image>=0.22.0",
+    "scikit-learn>=1.4.0",
+    "seaborn>=0.13.0",
+    "shap>=0.44.0",
+    "tensorflow>=2.15.0",
+    "tqdm>=4.66.0",
+    "wandb>=0.19.0",
 ]
 
-# ── OPTIONAL DEPENDENCY GROUPS ─────────────────────────────────────────────────
 [project.optional-dependencies]
-
-# install via `uv pip install -e ".[dl]"`) when needed.
-# Deep-learning stack — uncomment torch above if you pull this in
+# Install via: uv pip install -e ".[dl]"
 dl = [
     "torch>=2.3.0",
     "torchvision>=0.18.0",
-    "timm>=1.0",                     # Backbone zoo (ViT, MobileNet, EfficientViT…)
-    "einops>=0.8",                   # Expressive tensor ops for attention models
+    "timm>=1.0",
+    "einops>=0.8",
 ]
 
-# FLOPs / latency profiling — requires the dl group to be installed first
+# FLOPs / latency profiling (requires dl group)
 profiling = [
-    "thop>=0.1.1",                   # torch-op-counter
-    "fvcore>=0.1.5",                 # Facebook's FLOP counter (more accurate for some archs)
+    "thop>=0.1.1",
+    "fvcore>=0.1.5",
 ]
 
-# Developer tooling — one-time install, not needed on every machine
+# Developer tooling
 dev = [
-    "ruff>=0.15.4",
+    "ruff>=0.4.0",
     "cookiecutter>=2.6.0",
 ]
 
-
-# ── ENTRY POINTS ───────────────────────────────────────────────────────────────
 [project.scripts]
 train-tracker = "src.train:main"
-eval-tracker  = "src.inference:main"
-submit        = "src.scripts.submit:main"
+eval-tracker = "src.inference:main"
+submit = "src.scripts.submit:main"
 
 [project.urls]
-Repository = "https://github.com/zerone-team/aic4-tracker"
+Repository = "https://github.com/DEVOLOPER-1/DSAI_305_XAI"
 
-# ── RUFF CONFIGURATION ─────────────────────────────────────────────────────────
 [tool.ruff]
-line-length    = 88
-target-version = "py313"
+line-length = 88
+target-version = "py312"
 exclude = [
     ".git",
     ".venv",
     "__pycache__",
     "data",
-    # "members",    # uncomment to also ignore member notebooks
+    # "members",  # uncomment to also ignore member notebooks
 ]
 
 [tool.ruff.lint]
@@ -76,10 +72,8 @@ select = [
     "W",
     "F",
     "I",
-    "UP",
     "B",
     "C4",
-    "UP",
     "SIM",
     "TID",
     "RUF",
@@ -96,7 +90,7 @@ ignore = [
     "N812",
 ]
 
-fixable   = ["ALL"]
+fixable = ["ALL"]
 unfixable = []
 
 exclude = [
@@ -108,16 +102,15 @@ exclude = [
     "logs",
 ]
 
-
 [tool.ruff.lint.per-file-ignores]
-"members/**"    = ["E402", "F401", "ERA001", "B018"]  # exploratory notebooks
-"src/models/**" = ["N806"]                             # tensor dim names
-"tests/**"      = ["S101"]                             # assert is fine in tests
+"members/**" = ["E402", "F401", "ERA001", "B018"] # exploratory notebooks
+"src/models/**" = ["N806"] # tensor dim names
+"tests/**" = ["S101"] # assert is fine in tests
 
 [tool.ruff.lint.isort]
-known-first-party         = ["src"]
+known-first-party = ["src"]
 force-sort-within-sections = true
 
 [tool.ruff.format]
-quote-style  = "double"
+quote-style = "double"
 indent-style = "space"
