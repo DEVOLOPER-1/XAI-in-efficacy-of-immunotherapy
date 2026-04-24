@@ -45,6 +45,7 @@ profiling = [
 # Developer tooling — one-time install, not needed on every machine
 dev = [
     "ruff>=0.15.4",
+    "cookiecutter>=2.6.0",
 ]
 
 
