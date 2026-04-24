@@ -3,10 +3,9 @@ name = "dsai-305-xai"
 version = "0.1.0"
 description = "Explainable AI — DSAI 305 course project"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 
 dependencies = [
-    "beautifulsoup4>=4.12.0",
     "ipykernel>=6.29.0",
     "lime>=0.2.0.1",
     "matplotlib>=3.8.0",
@@ -31,9 +30,11 @@ dependencies = [
 dl = [
     "torch>=2.3.0",
     "torchvision>=0.18.0",
-    "timm>=1.0",
-    "einops>=0.8",
+#    "timm>=1.0",
+#    "einops>=0.8",
 ]
+
+# to install all optional dependencies: uv pip install -e ".[dl,profiling]"
 
 # FLOPs / latency profiling (requires dl group)
 profiling = [
@@ -47,6 +48,12 @@ dev = [
     "cookiecutter>=2.6.0",
 ]
 
+scrapping = [
+    "playwright>=1.40.0",
+    "beautifulsoup4>=4.12.0",
+
+]
+
 [project.scripts]
 train-tracker = "src.train:main"
 eval-tracker = "src.inference:main"
@@ -54,6 +61,18 @@ submit = "src.scripts.submit:main"
 
 [project.urls]
 Repository = "https://github.com/DEVOLOPER-1/DSAI_305_XAI"
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+torchvision = { index = "pytorch-cu121" }
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
 
 [tool.ruff]
 line-length = 88
