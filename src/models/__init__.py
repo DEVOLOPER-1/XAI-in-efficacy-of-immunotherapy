@@ -137,30 +137,14 @@ def _load_resnet(cfg: DotDict) -> Any:
         ) from exc
 
 
-def _load_vit(cfg: DotDict) -> Any:
-    """Vision Transformer patch encoder (timm-backed)."""
+def _load_google_net(cfg: DotDict) -> Any:
+    """GoogleNet patch encoder"""
     try:
-        from src.models.image import ViTEncoder  # type: ignore[import]
-        return ViTEncoder(cfg)
+        from src.models.image import GoogLeNetWSI  # type: ignore[import]
+        return GoogLeNetWSI(cfg)
     except ImportError as exc:
         raise ImportError(
-            "ViT model requires: uv pip install torch timm"
-        ) from exc
-
-
-def _load_abmil(cfg: DotDict) -> Any:
-    """Attention-Based Multiple Instance Learning aggregator.
-
-    Operates on pre-extracted patch features — no CNN backbone needed.
-    Best paired with cfg.dataset.use_preextracted: true.
-    Reference: Ilse et al. (2018) — https://arxiv.org/abs/1802.04712
-    """
-    try:
-        from src.models.image import ABMILModel  # type: ignore[import]
-        return ABMILModel(cfg)
-    except ImportError as exc:
-        raise ImportError(
-            "ABMIL requires PyTorch: uv pip install torch"
+            "GoogleNet model requires: uv pip install torch torchvision"
         ) from exc
 
 
@@ -197,6 +181,14 @@ def _load_late_fusion(cfg: DotDict) -> Any:
             "LateFusionModel requires PyTorch: uv pip install torch"
         ) from exc
 
+def _load_wsi_rna_mcb(cfg: DotDict) -> Any:
+    try:
+        from src.models.fusion import MCBFusionNet  # type: ignore[import]
+        return MCBFusionNet(cfg)
+    except ImportError as exc:
+        raise ImportError(
+            "MCBFusionNet requires PyTorch: uv pip install torch"
+        ) from exc
 
 # ---------------------------------------------------------------------------
 # Sub-registries
@@ -223,11 +215,13 @@ _TABULAR_REGISTRY: dict[str, Callable] = {
 
 _IMAGE_REGISTRY: dict[str, Any] = {
     "resnet": _load_resnet,
+    "google_net": _load_google_net,
     # "vit":  _load_vit,    # TODO: implement ViTEncoder
     # "abmil": _load_abmil, # TODO: implement ABMILModel
 }
 
 _FUSION_REGISTRY: dict[str, Any] = {
+    "wsi_rna_mcb": _load_wsi_rna_mcb,
     # "early": _load_early_fusion,  # TODO: implement EarlyFusionModel in src/models/fusion.py
     # "late":  _load_late_fusion,   # TODO: implement LateFusionModel in src/models/fusion.py
 }

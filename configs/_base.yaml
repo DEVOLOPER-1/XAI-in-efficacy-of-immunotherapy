@@ -17,28 +17,28 @@ dataset:
 #    seed               int   42
 #    batch_size         int   32
 #    image_size         int   224      ← resize each patch/tile to this resolution
-    data_root: "data/processed"
-    tabular_file: "clinical.csv"
-    images_dir: "images"
-    features_dir: "features"
-    target_col: "TMB"
-    patient_id_col: "PATIENT_ID"
-    use_preextracted: true
-    patch_size: 256
-    max_patches: 16
-    val_ratio: 0.15
-    seed: 42
-    batch_size: 32
-    image_size: 224
+#    data_root: "data/processed"
+#    tabular_file: "clinical.csv"
+#    images_dir: "images"
+#    features_dir: "features"
+#    target_col: "TMB"
+#    patient_id_col: "PATIENT_ID"
+#    use_preextracted: true
+#    patch_size: 256
+#    max_patches: 16
+#    val_ratio: 0.15
+#    seed: 42
+#    batch_size: 32
+#    image_size: 224
 model:
-    category: "tabular_only"        # "tabular_only", "image_only", or "fusion"
-    fusion_strategy: "early"        # "early" or "late"
-    type: "CNN"
-    optimizer: "Adam"
-    learning_rate: 0.001
-    batch_size: 32
-    epochs: 50
-    architecture: "CNN_v1"
+#    category: "tabular_only"        # "tabular_only", "image_only", or "fusion"
+#    fusion_strategy: "early"        # "early" or "late"
+#    type: "CNN"
+#    optimizer: "Adam"
+#    learning_rate: 0.001
+#    batch_size: 32
+#    epochs: 50
+#    architecture: "CNN_v1"
 wandb:
     entity: "mohamed-mourad-zewail-city"
     project_name: "TMB-prediction"

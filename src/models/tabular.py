@@ -64,9 +64,9 @@ import logging
 from typing import Any
 
 import numpy as np
-from sklearn.preprocessing import RobustScaler
-
+import os
 from src.config import DotDict
+import joblib
 
 log = logging.getLogger(__name__)
 
@@ -208,7 +208,13 @@ class _TabularBase:
             name = feature_names[idx] if feature_names and idx < len(feature_names) else f"feature_{idx}"
             log.info("  %2d. %-30s %.4f", rank, name, imps[idx])
 
+    def state_dict(self, *args, **kwargs):
+        """Proxy to expose the PyTorch network's state_dict to the saver."""
+        return self._est.state_dict(*args, **kwargs)
 
+    def load_state_dict(self, state_dict, strict=True):
+        """Proxy to allow loading weights directly into the PyTorch network."""
+        return self._est.load_state_dict(state_dict, strict=strict)
 # ---------------------------------------------------------------------------
 # 1. Decision Tree — reference implementation
 # ---------------------------------------------------------------------------
@@ -478,7 +484,6 @@ class DNNCancerRegressor(_TabularBase):
     _category_label: str = "DNN_TMB"
 
     def _build_estimator(self, cfg: "DotDict") -> Any:
-        import torch.nn as nn
         from sklearn.pipeline import Pipeline
         from sklearn.preprocessing import PowerTransformer, RobustScaler
 
@@ -532,8 +537,6 @@ class DNNCancerRegressor(_TabularBase):
         """Allows moving the model to GPU: model.to(device)"""
         self._est.to(device)
         return self
-
-    # --- REPLACING THE CALL LOGIC ---
 
     def __call__(self, image: torch.Tensor | None, tabular: torch.Tensor | None) -> torch.Tensor:
         """
