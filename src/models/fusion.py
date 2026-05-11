@@ -88,36 +88,42 @@ class MCBFusionNet(_TorchBase):
                 dropout_rate = cfg.model.get("droprate", 0.3)
                 mcb_out = cfg.model.get("mcb_out_dim", 512)
 
-                # --- A. Tabular Extractor (Your 0.75 R^2 TMBNet) ---
+                # --- 1. Load the FULL RNA Network ---
                 self.tabular_net = TMBNet(input_dim=21, p=dropout_rate)
 
-                # Load the frozen weights
-                tabular_weights_path = cfg.model.get("tabular_model_path", "path/to/frozen_tabular_weights.pth")
+                # --- 1. Load the FULL RNA Network ---
+                self.tabular_net = TMBNet(input_dim=21, p=dropout_rate)
+                tabular_weights_path = cfg.model.get("tabular_model_path",
+                                                     "freezed-models/runs/checkpoints/best_dnn_model.pth")
+
+                # MINIMUM EDIT: Replace the pickle hack with standard torch.load
                 state_dict = torch.load(tabular_weights_path, weights_only=False)
 
-                # Strip '_est.' prefix if it exists
                 cleaned_state_dict = {k.replace('_est.', ''): v for k, v in state_dict.items()}
                 self.tabular_net.load_state_dict(cleaned_state_dict)
 
-                # Freeze the network
+                # Freeze the RNA network completely. It is perfect as-is.
                 for param in self.tabular_net.parameters():
                     param.requires_grad = False
 
-                # STRIP THE FINAL LAYER:
-                # self.net[6] is the final nn.Linear(17, 1). Replace with Identity to expose 17D vector.
-                self.tabular_net.net[6] = nn.Identity()
+                # Freeze the RNA network completely. It is perfect as-is.
+                for param in self.tabular_net.parameters():
+                    param.requires_grad = False
+
+                # --- 2. Split the RNA Network for the Forward Pass ---
+                # We need the 17D features (layers 0-5) for fusion, and the final layer (6) for the baseline prediction
+                self.tab_feat_extractor = nn.Sequential(*list(self.tabular_net.net.children())[:6])
+                self.tab_predictor = list(self.tabular_net.net.children())[6]
+
                 self.tabular_dim = 17
-
-                print(f"Frozen Tabular Network loaded. Extracted embedding dimension: {self.tabular_dim}D")
-
-                # --- B. Image Extractor (Pre-extracted GoogLeNet) ---
                 self.image_dim = cfg.model.get("image_dim", 1024)
 
-                # --- C. MCB Fusion ---
+                # --- 3. The MCB WSI Branch ---
                 self.mcb = MCBLayer(self.image_dim, self.tabular_dim, out_dim=mcb_out)
+                self.norm = nn.LayerNorm(mcb_out)
 
-                # --- D. Final Prediction Head ---
-                self.head = nn.Sequential(
+                # --- 4. The Fusion Offset Head ---
+                self.fusion_head = nn.Sequential(
                     nn.Dropout(dropout_rate),
                     nn.Linear(mcb_out, 64),
                     nn.ReLU(),
@@ -125,18 +131,34 @@ class MCBFusionNet(_TorchBase):
                     nn.Linear(64, 1)
                 )
 
+                # Initialize the final layer to zero!
+                # This guarantees the WSI offset starts at 0, preserving your 0.80 baseline on Epoch 1.
+                nn.init.zeros_(self.fusion_head[-1].weight)
+                nn.init.zeros_(self.fusion_head[-1].bias)
+
             def forward(self, image, tabular):
-                # 1. Image: [B, 16, 1024] -> Mean Pool -> [B, 1024]
-                img_feat = image.mean(dim=1)
+                B = tabular.size(0)
+                device = tabular.device
 
-                # 2. RNA: [B, 21] -> Frozen TMBNet -> [B, 17]
-                # Pass 'None' for the image argument to satisfy TMBNet's signature
-                tab_feat = self.tabular_net(None, tabular)
+                # 1. WSI Embeddings
+                if image is not None:
+                    img_feat = image.mean(dim=1)
+                else:
+                    img_feat = torch.zeros(B, self.image_dim, dtype=torch.float32, device=device)
 
-                # 3. MCB Fuse: [B, 1024] & [B, 17] -> [B, 512]
-                fused_feat = self.mcb(img_feat, tab_feat)
+                # 2. RNA Features & Baseline Prediction
+                tab_feat = self.tab_feat_extractor(tabular)  # [B, 17]
+                base_pred = self.tab_predictor(tab_feat)  # [B, 1]
 
-                # 4. Predict
-                return self.head(fused_feat).squeeze(-1)
+                # 3. MCB Fusion (Find cross-modal interactions)
+                fused = self.mcb(img_feat, tab_feat)
+                fused = self.norm(fused)
+
+                # 4. Calculate the WSI "Correction Offset"
+                fusion_offset = self.fusion_head(fused)  # [B, 1]
+
+                # 5. Final Boosting Prediction
+                final_pred = base_pred + fusion_offset
+                return final_pred.squeeze(-1)
 
         return InnerMCBFusion(cfg)
