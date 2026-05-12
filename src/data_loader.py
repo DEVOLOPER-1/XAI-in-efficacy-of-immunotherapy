@@ -669,7 +669,7 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader]:
             img_ids = (
                 {p.stem for p in scan_dir.glob("*.npy")}
                 if preextracted
-                else {p.name for p in scan_dir.iterdir() if p.is_dir()}
+                else set(slide_store._manifest_map.keys())  # <-- THE FIX
             )
     if use_tabular and use_image:
         all_ids = tabular_ids.intersection(img_ids)

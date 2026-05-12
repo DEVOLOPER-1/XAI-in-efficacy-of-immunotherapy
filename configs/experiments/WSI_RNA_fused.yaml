@@ -34,7 +34,7 @@ model:
     fusion_strategy: "wsi_rna_mcb"
     type: "wsi_rna_mcb"
     droprate: 0.0
-    mcb_output_dim: 1024
+    mcb_out_dim: 512
     image_dim: 1024
     tabular_model_path: "freezed-models/runs/checkpoints/dnn_genetic_paper-epch:50-batch:32-lr:0.01_weights.pth"
 
