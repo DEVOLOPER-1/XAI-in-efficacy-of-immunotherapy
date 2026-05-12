@@ -1,0 +1,58 @@
+# configs/experiments/DNN_genetic_baseline.yaml
+#
+# Reference experiment config for the DecisionTreeRegressor.
+# Inherits shared defaults from configs/_base.yaml; keys here override base.
+#
+# Run:
+#   python main.py --config configs/experiments/DNN_genetic.yaml --mode train
+#   python main.py --config configs/experiments/DNN_genetic.yaml --mode eval
+#
+# Commit convention (STANDARDS §1):
+#   exp: decision tree baseline — depth 5, survival_months target
+
+experiment_name: dnn_genetic_paper_architicture
+
+# ── Modalities ──────────────────────────────────────────────────────────────
+modalities:
+  tabular: true
+  image:   false
+
+# ── Model ───────────────────────────────────────────────────────────────────
+model:
+  category: tabular_only
+  type:     tabular_mlp
+
+  droprate: 0.2
+  
+  random_state: 42
+
+# ── Dataset ─────────────────────────────────────────────────────────────────
+dataset:
+  data_root:       data/processed
+  tabular_file:    stad_rna_selected:21.parquet
+  target_col:      TMB   # regression target column
+
+  val_ratio:    0.15    # 15% of patients held out for validation
+  seed:         42      # controls the deterministic train/val split
+  batch_size:   32
+
+# ── Training ────────────────────────────────────────────────────────────────
+training:
+  save_dir: freezed-models/runs/checkpoints
+
+  epochs: 50
+  val_every: 1
+  lr: 0.01
+#  weight_decay: 0.0001
+
+
+  risk_threshold:  3.84
+  upload_pickled_model: true
+
+# ── Weights & Biases ────────────────────────────────────────────────────────
+wandb:
+  run_name: "dnn_genetic_paper-epch:50-batch:32-lr:0.01"
+  tags:
+    - genetic_only
+    - neural_network
+    - paper_architecture
