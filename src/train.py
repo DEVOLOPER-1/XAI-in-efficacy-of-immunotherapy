@@ -168,7 +168,7 @@ def _train_neural(
     )
     criterion = nn.HuberLoss(delta=1.0)
 
-    best_rmse:     float             = float("inf")
+    best_huber: float = float("inf")
     best_metrics:  dict[str, float]  = {}
 
     log.info("Neural training — epochs: %d | val_every: %d | lr: %g", num_epochs, val_every, lr)
@@ -209,9 +209,9 @@ def _train_neural(
             metrics = _neural_validate(model, val_loader, threshold=threshold)
 
             log.info(
-                "Epoch %d/%d — train_loss: %.4f | RMSE: %.4f | R²: %.4f | C-Index: %.4f",
+                "Epoch %d/%d — train_loss: %.4f | val_huber: %.4f | R²: %.4f",
                 epoch, num_epochs, mean_loss,
-                metrics["rmse"], metrics["r2"], metrics["c_index"],
+                metrics["huber"], metrics["r2"]
             )
 
             # Log to W&B only at validation steps (bandwidth-conscious)
@@ -223,11 +223,11 @@ def _train_neural(
                     step=epoch,
                 )
 
-            if metrics["rmse"] < best_rmse:
-                best_rmse    = metrics["rmse"]
+            if metrics["huber"] < best_huber:
+                best_huber = metrics["huber"]
                 best_metrics = metrics
                 save_checkpoint(model, save_path)
-                log.info("  ↳ New best RMSE=%.4f — checkpoint saved.", best_rmse)
+                log.info("  ↳ New best Huber=%.4f — checkpoint saved.", best_huber)
 
     if (training_cfg.get('upload_pickled_model', False)):
         artifact = wandb.Artifact(name="run_weights", type="model")
