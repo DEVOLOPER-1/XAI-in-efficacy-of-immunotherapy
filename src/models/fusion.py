@@ -102,13 +102,10 @@ class MCBFusionNet(_TorchBase):
                 cleaned_state_dict = {k.replace('_est.', ''): v for k, v in state_dict.items()}
                 self.tabular_net.load_state_dict(cleaned_state_dict)
 
-                # Freeze the RNA network completely. It is perfect as-is.
+                # By setting this to True, the RNA weights will actively
+                # shift to co-adapt with the fixed 1024D ImageNet features!
                 for param in self.tabular_net.parameters():
-                    param.requires_grad = False
-
-                # Freeze the RNA network completely. It is perfect as-is.
-                for param in self.tabular_net.parameters():
-                    param.requires_grad = False
+                    param.requires_grad = True
 
                 # --- 2. Split the RNA Network for the Forward Pass ---
                 # We need the 17D features (layers 0-5) for fusion, and the final layer (6) for the baseline prediction
@@ -125,10 +122,10 @@ class MCBFusionNet(_TorchBase):
                 # --- 4. The Fusion Offset Head ---
                 self.fusion_head = nn.Sequential(
                     nn.Dropout(dropout_rate),
-                    nn.Linear(mcb_out, 64),
+                    nn.Linear(mcb_out, 128),
                     nn.ReLU(),
                     nn.Dropout(dropout_rate / 2),
-                    nn.Linear(64, 1)
+                    nn.Linear(128, 1)
                 )
 
                 # Initialize the final layer to zero!
