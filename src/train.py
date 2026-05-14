@@ -116,7 +116,7 @@ def train(cfg: DotDict) -> dict[str, float]:
 
     # ── 3. Data ───────────────────────────────────────────────────────────────
     from src.data_loader import build_dataloaders
-    train_loader, val_loader = build_dataloaders(cfg)
+    train_loader, val_loader, _ = build_dataloaders(cfg)
     log.info(
         "Data ready — train: %d batches | val: %d batches",
         len(train_loader), len(val_loader),
