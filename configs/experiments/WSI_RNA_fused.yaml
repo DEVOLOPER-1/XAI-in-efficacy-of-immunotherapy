@@ -1,0 +1,57 @@
+experiment_name: pathological_genetic_fused
+modalities:
+    image: true
+    tabular: true
+dataset:
+#data_root          str   "data"
+#    tabular_file       str   "clinical.csv" (rooted at data_root)
+#    images_dir         str   "images"
+#    features_dir       str   "features"
+#    target_col         str   "survival_months"
+#    patient_id_col     str   "PATIENT_ID"
+#    use_preextracted   bool  true     ← load .npy features; false = tile SVS on-the-fly
+#    patch_size         int   256      ← tile size when tiling SVS on-the-fly
+#    max_patches        int   16       ← patches sampled per slide per epoch
+#    val_ratio          float 0.15
+#    seed               int   42
+#    batch_size         int   32
+#    image_size         int   224      ← resize each patch/tile to this resolution
+    data_root: "/media/maro/Mom0-0/Datasets/TCGA/"
+    features_dir: "pathological/features"
+    manifest_tsv: "pathological/raw/gdc_sample_sheet.2026-05-10.tsv"
+    tabular_file: "stad_rna_selected:21.parquet"
+    target_col: "TMB"
+    patient_id_col: "PATIENT_ID"
+    use_preextracted: true
+    patch_size: 256
+    max_patches: 16
+    val_ratio: 0.15
+    seed: 42
+    batch_size: 32
+    image_size: 224
+model:
+    category: "fusion"        # "tabular_only", "image_only", or "fusion"
+    fusion_strategy: "wsi_rna_mcb"
+    type: "wsi_rna_mcb"
+    droprate: 0.0
+    mcb_out_dim: 512
+    image_dim: 1024
+    tabular_model_path: "freezed-models/runs/checkpoints/dnn_genetic_paper-epch:50-batch:32-lr:0.01_weights.pth"
+
+training:
+  save_dir: freezed-models/runs/checkpoints
+
+  epochs: 100
+  val_every: 1
+  lr: 0.0005
+  weight_decay: 0.0001
+
+
+  risk_threshold:  3.84
+  upload_pickled_model: true
+wandb:
+    run_name: "wsi-rna-epch:100-lr:5e-4-dr:0.0-mcb_dim:1024"
+    tags:
+        - pathological_genetic
+        - neural_network
+        - paper_architecture

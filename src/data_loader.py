@@ -150,20 +150,20 @@ class TabularStore:
 
         # -- Data Preprocessing -----------------------------------------------
         #     -- Imputation -------------------------------------------------------
-        for col in raw.columns:
-            if pd.api.types.is_numeric_dtype(raw[col]):
-                raw[col] = raw[col].fillna(raw[col].median())
-            else:
-                mode_val = raw[col].mode()
-                raw[col] = raw[col].fillna(
-                    mode_val.iloc[0] if not mode_val.empty else "UNKNOWN"
-                )
-
-        #     -- Categorical encoding ---------------------------------------------
-        for col in raw.select_dtypes(include=["object", "category"]).columns:
-            raw[col] = raw[col].astype("category").cat.codes.astype(float)
-        for col in raw.select_dtypes(include=["bool"]).columns:
-            raw[col] = raw[col].astype(float)
+        # for col in raw.columns:
+        #     if pd.api.types.is_numeric_dtype(raw[col]):
+        #         raw[col] = raw[col].fillna(raw[col].median())
+        #     else:
+        #         mode_val = raw[col].mode()
+        #         raw[col] = raw[col].fillna(
+        #             mode_val.iloc[0] if not mode_val.empty else "UNKNOWN"
+        #         )
+        #
+        # #     -- Categorical encoding ---------------------------------------------
+        # for col in raw.select_dtypes(include=["object", "category"]).columns:
+        #     raw[col] = raw[col].astype("category").cat.codes.astype(float)
+        # for col in raw.select_dtypes(include=["bool"]).columns:
+        #     raw[col] = raw[col].astype(float)
 
         self._features: pd.DataFrame = raw.astype(np.float32)
 
@@ -205,6 +205,49 @@ class TabularStore:
         val = self._targets.loc[patient_id]
         return float(val) if pd.notna(val) else None
 
+    def fit_and_scale(self, train_ids: list[str], save_path: Path) -> None:
+        """Fits sklearn preprocessor on training data and transforms all data."""
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import PowerTransformer, RobustScaler
+        import joblib
+
+        log.info("Fitting Tabular Pipeline strictly on training patients to prevent leakage...")
+
+        train_mask = self._features.index.isin(train_ids)
+        train_data = self._features.loc[train_mask]
+
+        if train_data.empty:
+            log.warning("No training data found! Skipping tabular scaling.")
+            return
+
+        self.pipeline = Pipeline([
+            ("power", PowerTransformer(method='yeo-johnson', standardize=True)),
+            ("scaler", RobustScaler())
+        ])
+        self.pipeline.fit(train_data.values)
+
+        # Transform in-place
+        scaled_values = self.pipeline.transform(self._features.values)
+        self._features.iloc[:, :] = scaled_values
+
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self.pipeline, save_path)
+        log.info(f"✅ Securely fitted preprocessor saved to: {save_path}")
+
+    def load_and_scale(self, load_path: Path) -> None:
+        """Loads a pre-fitted pipeline and applies it to all data."""
+        import joblib
+
+        log.info(f"Loading existing Tabular Pipeline from {load_path}...")
+        if not load_path.exists():
+            raise FileNotFoundError(f"Cannot load preprocessor; {load_path} missing.")
+
+        self.pipeline = joblib.load(load_path)
+
+        # Transform in-place using Phase 1 statistics
+        scaled_values = self.pipeline.transform(self._features.values)
+        self._features.iloc[:, :] = scaled_values
+        log.info("✅ Successfully applied pre-fitted scaler to tabular data.")
 
 # ---------------------------------------------------------------------------
 # Slide / WSI store
@@ -235,13 +278,14 @@ class SlideStore:
     _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
     def __init__(
-        self,
-        images_dir: Path,
-        features_dir: Path,
-        use_preextracted: bool = True,
-        patch_size: int = 256,
-        max_patches: int = 16,
-        image_size: int = 224,
+            self,
+            images_dir: Path,
+            features_dir: Path,
+            use_preextracted: bool = True,
+            patch_size: int = 256,
+            max_patches: int = 16,
+            image_size: int = 224,
+            manifest_path: Path | None = None,  # NEW: For UUID mapping
     ) -> None:
         self._images_dir = images_dir
         self._features_dir = features_dir
@@ -250,14 +294,37 @@ class SlideStore:
         self._max_patches = max_patches
         self._image_size = image_size
 
+        # --- 1. TSV / UUID Mapping ---
+        self._manifest_map: dict[str, Path] = {}
+        if not use_preextracted and manifest_path and manifest_path.exists():
+            df = pd.read_csv(manifest_path, sep='\t')
+            for _, row in df.iterrows():
+                pid = row['Case ID']
+                # Map Patient -> data/images/<UUID_Folder>/<File.svs>
+                svs_path = self._images_dir / row['File ID'] / row['File Name']
+                if pid not in self._manifest_map:
+                    self._manifest_map[pid] = svs_path
+
+        # --- 2. Augmentation & Normalization Tools ---
+        if not use_preextracted:
+            import albumentations as A
+            self.augmentor = A.Compose([
+                A.HorizontalFlip(p=0.5),
+                A.VerticalFlip(p=0.5),
+                A.Affine(translate_percent={'x': (-0.1, 0.1), 'y': (-0.1, 0.1)}, p=0.5),
+            ])
+            try:
+                import torchstain
+                self.normalizer = torchstain.normalizers.MacenkoNormalizer(backend='numpy')
+            except ImportError:
+                self.normalizer = None
+                log.warning("torchstain missing. Macenko skipped.")
+
     def patient_has_data(self, patient_id: str) -> bool:
         """Return True if any image/feature data exists for this patient."""
         if self._use_preextracted:
             return (self._features_dir / f"{patient_id}.npy").exists()
-        slide_dir = self._images_dir / patient_id
-        if not slide_dir.is_dir():
-            return False
-        return any(slide_dir.glob("*.svs")) or any(slide_dir.glob("*.tiff"))
+        return patient_id in self._manifest_map and self._manifest_map[patient_id].exists()
 
     def get_image(self, patient_id: str) -> np.ndarray | None:
         """Load and return image data for *patient_id*, or None if absent."""
@@ -271,40 +338,21 @@ class SlideStore:
 
     def _load_preextracted(self, patient_id: str) -> np.ndarray | None:
         path = self._features_dir / f"{patient_id}.npy"
-        if not path.exists():
-            return None
-        arr = np.load(path).astype(np.float32)
-        log.debug("Pre-extracted features for %s: shape=%s", patient_id, arr.shape)
-        return arr
-
-    # ------------------------------------------------------------------
-    # Mode B
-    # ------------------------------------------------------------------
+        if not path.exists(): return None
+        return np.load(path).astype(np.float32)
 
     def _tile_svs(self, patient_id: str) -> np.ndarray | None:
         """Sample random tiles from the patient's SVS file.
 
         Returns float32 (N, 3, H, W) tensor normalised to ImageNet stats.
         """
-        slide_dir = self._images_dir / patient_id
-        if not slide_dir.is_dir():
+        if patient_id not in self._manifest_map:
             return None
+        svs_path = self._manifest_map[patient_id]
 
-        candidates = list(slide_dir.glob("*.svs")) + list(slide_dir.glob("*.tiff"))
-        if not candidates:
-            log.warning("No SVS/TIFF found for patient %s in %s", patient_id, slide_dir)
-            return None
+        import openslide
+        import cv2
 
-        try:
-            import openslide  # type: ignore[import]
-        except ImportError as exc:
-            raise ImportError(
-                "openslide-python is required for on-the-fly WSI tiling.\n"
-                "Install: uv pip install openslide-python\n"
-                "Or set cfg.dataset.use_preextracted: true to use .npy files instead."
-            ) from exc
-
-        svs_path = candidates[0]
         try:
             slide = openslide.OpenSlide(str(svs_path))
         except openslide.OpenSlideError as exc:
@@ -313,33 +361,46 @@ class SlideStore:
 
         width, height = slide.dimensions
         ps = self._patch_size
-        grid_w = max(1, width // ps)
-        grid_h = max(1, height // ps)
-        total_tiles = grid_w * grid_h
+        grid_w, grid_h = max(1, width // ps), max(1, height // ps)
 
-        # Random tile sampling — not seeded so each epoch sees different tiles.
-        # This acts as data augmentation for the image modality.
-        sampled = random.sample(range(total_tiles), min(self._max_patches, total_tiles))
+        all_indices = list(range(grid_w * grid_h))
+        random.shuffle(all_indices)  # Shuffle to randomly hunt for tissue
 
         tiles: list[np.ndarray] = []
-        for idx in sampled:
-            # Row-major: scan left-to-right, top-to-bottom.
-            # OpenSlide read_region(x, y) expects x=horizontal, y=vertical.
-            # col = idx % grid_w  → horizontal position (x-axis)
-            # row = idx // grid_w → vertical position   (y-axis)
-            x_idx = idx % grid_w  # column index (horizontal)
-            y_idx = idx // grid_w  # row index    (vertical)
-            x_off = x_idx * ps
-            y_off = y_idx * ps
-            region = slide.read_region((x_off, y_off), 0, (ps, ps))
-            tile = np.array(region.convert("RGB"), dtype=np.float32) / 255.0
-            tile = _resize_hwc(tile, self._image_size)
-            tile = (tile - self._MEAN) / self._STD
-            tile = tile.transpose(2, 0, 1)  # HWC → CHW
-            tiles.append(tile)
+        for idx in all_indices:
+            if len(tiles) >= self._max_patches:
+                break
+
+            x_off = (idx % grid_w) * ps
+            y_off = (idx // grid_w) * ps
+
+            region = slide.read_region((x_off, y_off), 0, (ps, ps)).convert("RGB")
+            tile_np = np.array(region)
+
+            # 1. Tissue Detection (Drop White Glass)
+            gray = cv2.cvtColor(tile_np, cv2.COLOR_RGB2GRAY)
+            if (np.sum(gray > 220) / (ps * ps)) > 0.5:
+                continue
+
+                # 2. Macenko Normalization
+            if self.normalizer:
+                try:
+                    tile_np, _, _ = self.normalizer.normalize(I=tile_np, stains=False)
+                except Exception:
+                    continue  # Skip if SVD fails on uniform patches
+
+            # 3. Augmentations
+            tile_np = self.augmentor(image=tile_np)["image"]
+
+            # 4. Standardize to ImageNet
+            tile_np = tile_np.astype(np.float32) / 255.0
+            tile_np = _resize_hwc(tile_np, self._image_size)
+            tile_np = (tile_np - self._MEAN) / self._STD
+            tile_np = tile_np.transpose(2, 0, 1)
+            tiles.append(tile_np)
 
         slide.close()
-        return np.stack(tiles, axis=0) if tiles else None  # (N, 3, H, W)
+        return np.stack(tiles, axis=0) if tiles else None
 
 
 def _resize_hwc(img: np.ndarray, size: int) -> np.ndarray:
@@ -566,23 +627,26 @@ class _BatchLoader:
 # Public: build_dataloaders
 # ---------------------------------------------------------------------------
 
-
-def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader]:
-    """Construct train and validation dataloaders from the merged config.
+def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader, _BatchLoader | None]:
+    """Construct train, validation, and test dataloaders from the merged config.
 
     Args:
         cfg: Merged experiment config (from src.config.load_config).
 
     Returns:
-        (train_loader, val_loader) — _BatchLoader instances.
+        (train_loader, val_loader, test_loader) — _BatchLoader instances.
+        test_loader will be None if no test split is generated.
     """
     ds_cfg = cfg.get("dataset") or DotDict({})
     mod_cfg = cfg.get("modalities") or DotDict({})
 
     data_root = Path(ds_cfg.get("data_root", "data"))
+    manifest_tsv = data_root / ds_cfg.get("manifest_tsv", "gdc_manifest.tsv")
     tabular_file = data_root / ds_cfg.get("tabular_file", "clinical.csv")
     images_dir = data_root / ds_cfg.get("images_dir", "images")
     features_dir = data_root / ds_cfg.get("features_dir", "features")
+    split_file = ds_cfg.get("patients_split_file", None)  # <-- NEW
+
     target_col = ds_cfg.get("target_col", "survival_months")
     id_col = ds_cfg.get("patient_id_col", "PATIENT_ID")
     val_ratio = ds_cfg.get("val_ratio", 0.15)
@@ -610,67 +674,105 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader]:
             patch_size=patch_size,
             max_patches=max_patches,
             image_size=image_size,
+            manifest_path=manifest_tsv,
         )
 
-    # -- Union of all known patient IDs ------------------------------------
-    all_ids: set[str] = set()
-    if tabular_store:
-        all_ids.update(tabular_store.patient_ids)
+    # -- Intersection of all known patient IDs (Strict Multimodal) --
+    tabular_ids = set(tabular_store.patient_ids) if tabular_store else set()
+
+    img_ids = set()
     if slide_store:
         scan_dir = features_dir if preextracted else images_dir
         if scan_dir.exists():
             img_ids = (
                 {p.stem for p in scan_dir.glob("*.npy")}
                 if preextracted
-                else {p.name for p in scan_dir.iterdir() if p.is_dir()}
+                else set(slide_store._manifest_map.keys())
             )
-            all_ids.update(img_ids)
+
+    if use_tabular and use_image:
+        all_ids = tabular_ids.intersection(img_ids)
+        log.info(f"Strict Multimodal mode: Found {len(all_ids)} patients with BOTH RNA and WSI.")
+    elif use_tabular:
+        all_ids = tabular_ids
+    elif use_image:
+        all_ids = img_ids
+    else:
+        all_ids = set()
 
     if not all_ids:
-        raise RuntimeError(
-            "No patients found. Verify cfg.dataset.data_root, tabular_file, "
-            "images_dir, and features_dir."
-        )
+        raise RuntimeError("No valid patients found after intersection.")
 
-    # -- Deterministic train / val split -----------------------------------
-    sorted_ids = sorted(all_ids)
-    rng = random.Random(seed)
-    rng.shuffle(sorted_ids)
-    n_val = max(1, int(len(sorted_ids) * val_ratio))
-    val_ids = sorted_ids[:n_val]
-    train_ids = sorted_ids[n_val:]
+    # -- Custom Split Logic -----------------------------------
+    test_ids = []
 
-    log.info(
-        "Patient split: train=%d, val=%d (seed=%d, val_ratio=%.2f)",
-        len(train_ids),
-        len(val_ids),
-        seed,
-        val_ratio,
-    )
+    if split_file and Path(split_file).exists():
+        log.info(f"Loading deterministic patient splits from {split_file}")
+        splits_df = pd.read_csv(split_file)
 
-    train_ds = MultimodalDataset(
-        tabular_store, slide_store, train_ids, shuffle=True, seed=seed
-    )
+        # --- NEW: Missing Data Warning Logic ---
+        master_ids = set(splits_df[id_col])
+        missing_ids = master_ids - all_ids
+
+        if missing_ids:
+            log.warning(
+                f"⚠️ MISSING DATA WARNING: {len(missing_ids)} patients from the master "
+                f"split file are missing required modalities and were EXCLUDED."
+            )
+            # Log a small sample so teammates know exactly which IDs to go hunt down
+            sample_miss = list(missing_ids)[:5]
+            log.warning(f"⚠️ Sample of missing IDs: {sample_miss} ...")
+        # ---------------------------------------
+
+        # Filter the master split file to ONLY include patients
+        # that survived the modality intersection (all_ids)
+        valid_splits = splits_df[splits_df[id_col].isin(all_ids)]
+
+        train_ids = valid_splits[valid_splits['split'] == 'train'][id_col].tolist()
+        val_ids = valid_splits[valid_splits['split'] == 'val'][id_col].tolist()
+        test_ids = valid_splits[valid_splits['split'] == 'test'][id_col].tolist()
+
+        log.info(
+            f"Split distribution for current modalities: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}")
+
+    else:
+        # Fallback to the original random split if no file is provided
+        log.info("No split file provided. Falling back to random deterministic split.")
+        sorted_ids = sorted(all_ids)
+        rng = random.Random(seed)
+        rng.shuffle(sorted_ids)
+        n_val = max(1, int(len(sorted_ids) * val_ratio))
+        val_ids = sorted_ids[:n_val]
+        train_ids = sorted_ids[n_val:]
+
+    # -- Fit Tabular Scaler -----------------------------------
+    if tabular_store:
+        save_dir = Path(cfg.training.get("save_dir", "freezed-models/runs/checkpoints"))
+        prep_path = save_dir / "dnn_preprocessor.pkl"
+
+        if cfg.model.get("category") == "fusion":
+            tabular_store.load_and_scale(prep_path)
+        else:
+            # Notice how we explicitly pass ONLY train_ids to prevent data leakage!
+            tabular_store.fit_and_scale(train_ids, prep_path)
+
+    # -- Build Datasets and Loaders -----------------------------------
+    train_ds = MultimodalDataset(tabular_store, slide_store, train_ids, shuffle=True, seed=seed)
     val_ds = MultimodalDataset(tabular_store, slide_store, val_ids, shuffle=False)
 
-    train_loader = _BatchLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        seed=seed,
-        feature_names=tabular_store.feature_names if tabular_store else None,
-    )
-    val_loader = _BatchLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        feature_names=tabular_store.feature_names if tabular_store else None,
-    )
+    feature_names = tabular_store.feature_names if tabular_store else None
+
+    train_loader = _BatchLoader(train_ds, batch_size=batch_size, shuffle=True, seed=seed, feature_names=feature_names)
+    val_loader = _BatchLoader(val_ds, batch_size=batch_size, shuffle=False, feature_names=feature_names)
+
+    test_loader = None
+    if test_ids:
+        test_ds = MultimodalDataset(tabular_store, slide_store, test_ids, shuffle=False)
+        test_loader = _BatchLoader(test_ds, batch_size=batch_size, shuffle=False, feature_names=feature_names)
 
     log.info(
-        "Dataloaders: train=%d batches, val=%d batches (batch_size=%d)",
-        len(train_loader),
-        len(val_loader),
-        batch_size,
+        "Dataloaders: train=%d batches, val=%d batches, test=%d batches (batch_size=%d)",
+        len(train_loader), len(val_loader), len(test_loader) if test_loader else 0, batch_size,
     )
-    return train_loader, val_loader
+
+    return train_loader, val_loader, test_loader

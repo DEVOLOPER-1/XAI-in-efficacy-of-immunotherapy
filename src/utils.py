@@ -211,7 +211,7 @@ def auroc(
     tpr = tp_cum / n_pos
     fpr = fp_cum / n_neg
 
-    return float(np.trapz(tpr, fpr))
+    return float(np.trapezoid(tpr, fpr))
 
 
 def auprc(
@@ -246,8 +246,24 @@ def auprc(
     precision = tp_cum / np.arange(1, len(yt_sorted) + 1)
     recall = tp_cum / n_pos
 
-    return float(np.trapz(precision, recall))
+    return float(np.trapezoid(precision, recall))
 
+def huber_loss(y_true: Sequence[float], y_pred: Sequence[float], delta: float = 1.0) -> float:
+    """Huber Loss — matches PyTorch nn.HuberLoss(delta=1.0).
+
+    Robust regression metric that acts like MSE for small errors
+    and MAE for large errors (outliers).
+    """
+    yt, yp = _clean_pairs(y_true, y_pred)
+    if len(yt) == 0:
+        return float("nan")
+
+    abs_err = np.abs(yt - yp)
+    quadratic = np.minimum(abs_err, delta)
+    linear = abs_err - quadratic
+
+    loss = 0.5 * (quadratic ** 2) + delta * linear
+    return float(np.mean(loss))
 
 # ---------------------------------------------------------------------------
 # Omnibus metric dict — used by train.py and W&B logging
@@ -278,6 +294,7 @@ def compute_all_metrics(
     metrics: dict[str, float] = {
         "rmse": rmse(y_true, y_pred),
         "mae": mae(y_true, y_pred),
+        "huber": huber_loss(y_true, y_pred, delta=1.0),  # <-- NEW: Added Huber
         "r2": r2_score(y_true, y_pred),
         "pearson_r": pearson_r(y_true, y_pred),
         "c_index": concordance_index(y_true, y_pred, events),
