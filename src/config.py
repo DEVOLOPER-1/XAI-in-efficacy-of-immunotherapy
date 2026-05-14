@@ -25,6 +25,7 @@ import yaml
 # DotDict — lightweight dot-access wrapper around a plain dict
 # ---------------------------------------------------------------------------
 
+
 class DotDict:
     """Recursive dot-access wrapper.
 
@@ -87,6 +88,7 @@ class DotDict:
 # ---------------------------------------------------------------------------
 # Deep-merge utility
 # ---------------------------------------------------------------------------
+
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge *override* into *base*, returning a new dict.

@@ -207,7 +207,7 @@ marimo/_lsp/
 __marimo__/
 /downloads_bad/
 /downloads_tmp/
-/downloads_valid/
+/data/cbioportal_tabular_downloads/
 /logs/
 
 # wandb
@@ -215,3 +215,11 @@ wandb/
 freezed-models/
 configs/experiments/
 src/models/
+
+
+# Project-specific large assets and generated artifacts
+/data/
+/QuPath-v0.7.0-Linux/
+
+# Model weights/checkpoints
+*.h5

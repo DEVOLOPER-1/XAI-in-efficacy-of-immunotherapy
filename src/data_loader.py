@@ -47,11 +47,11 @@ Modality flags (under cfg.modalities.*):
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import logging
 import math
-import random
-from dataclasses import dataclass, field
 from pathlib import Path
+import random
 from typing import Any, Iterator
 
 import numpy as np
@@ -65,6 +65,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Patient sample — the unit that flows through the entire pipeline
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PatientSample:
@@ -85,16 +86,18 @@ class PatientSample:
         target     : Float regression target. None for test patients.
         modalities : Set of active modality strings, e.g. {"tabular", "image"}.
     """
+
     patient_id: str
-    tabular:    np.ndarray | None
-    image:      np.ndarray | None
-    target:     float | None
+    tabular: np.ndarray | None
+    image: np.ndarray | None
+    target: float | None
     modalities: set[str] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------------------
 # Tabular store
 # ---------------------------------------------------------------------------
+
 
 class TabularStore:
     """Loads, imputes, and encodes the clinical/genomics CSV.
@@ -110,9 +113,9 @@ class TabularStore:
 
     def __init__(
         self,
-        file_path:       Path,
+        file_path: Path,
         patient_id_col: str,
-        target_col:     str,
+        target_col: str,
     ) -> None:
         if not file_path.exists():
             raise FileNotFoundError(
@@ -166,7 +169,8 @@ class TabularStore:
 
         log.info(
             "TabularStore ready: %d patients, %d features.",
-            len(self._features), self.n_features,
+            len(self._features),
+            self.n_features,
         )
 
     @property
@@ -248,6 +252,7 @@ class TabularStore:
 # ---------------------------------------------------------------------------
 # Slide / WSI store
 # ---------------------------------------------------------------------------
+
 
 class SlideStore:
     """Loads pathology images (WSI) for each patient.
@@ -404,6 +409,7 @@ def _resize_hwc(img: np.ndarray, size: int) -> np.ndarray:
         return img
     try:
         import cv2  # type: ignore[import]
+
         return cv2.resize(img, (size, size), interpolation=cv2.INTER_LINEAR)
     except ImportError:
         # Nearest-neighbour fallback — no extra deps
@@ -416,6 +422,7 @@ def _resize_hwc(img: np.ndarray, size: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # MultimodalDataset
 # ---------------------------------------------------------------------------
+
 
 class MultimodalDataset:
     """Dataset for multimodal cancer research — one item per patient.
@@ -435,16 +442,16 @@ class MultimodalDataset:
     def __init__(
         self,
         tabular_store: TabularStore | None,
-        slide_store:   SlideStore   | None,
-        patient_ids:   list[str],
+        slide_store: SlideStore | None,
+        patient_ids: list[str],
         shuffle: bool = False,
-        seed:    int  = 42,
+        seed: int = 42,
     ) -> None:
         self._tabular = tabular_store
-        self._slides  = slide_store
-        self._ids     = patient_ids
+        self._slides = slide_store
+        self._ids = patient_ids
         self._shuffle = shuffle
-        self._seed    = seed
+        self._seed = seed
 
         log.info(
             "MultimodalDataset: %d patients | tabular=%s | image=%s",
@@ -457,15 +464,15 @@ class MultimodalDataset:
         return len(self._ids)
 
     def __getitem__(self, idx: int) -> PatientSample:
-        pid        = self._ids[idx]
+        pid = self._ids[idx]
         modalities: set[str] = set()
 
         # -- Tabular ----------------------------------------------------------
         tabular = None
-        target  = None
+        target = None
         if self._tabular is not None:
             tabular = self._tabular.get_features(pid)
-            target  = self._tabular.get_target(pid)
+            target = self._tabular.get_target(pid)
             if tabular is not None:
                 modalities.add("tabular")
 
@@ -477,7 +484,9 @@ class MultimodalDataset:
                 modalities.add("image")
 
         if not modalities:
-            log.warning("Patient %s: no modality data found — sample will be empty.", pid)
+            log.warning(
+                "Patient %s: no modality data found — sample will be empty.", pid
+            )
 
         return PatientSample(
             patient_id=pid,
@@ -500,6 +509,7 @@ class MultimodalDataset:
 # Collation
 # ---------------------------------------------------------------------------
 
+
 def collate_patients(samples: list[PatientSample]) -> dict[str, Any]:
     """Collate a list of PatientSamples into a batched dict.
 
@@ -516,7 +526,7 @@ def collate_patients(samples: list[PatientSample]) -> dict[str, Any]:
                  Fusion models should use the "modalities" field to apply masking.
     """
     patient_ids = [s.patient_id for s in samples]
-    modalities  = [s.modalities  for s in samples]
+    modalities = [s.modalities for s in samples]
 
     # targets — NaN for unlabelled test patients
     targets = np.array(
@@ -527,10 +537,14 @@ def collate_patients(samples: list[PatientSample]) -> dict[str, Any]:
     # tabular — zero-pad missing patients
     tab_present = [s.tabular for s in samples if s.tabular is not None]
     if tab_present:
-        n_feat  = tab_present[0].shape[0]
+        n_feat = tab_present[0].shape[0]
         tabular = np.stack(
-            [s.tabular if s.tabular is not None else np.zeros(n_feat, dtype=np.float32)
-             for s in samples],
+            [
+                s.tabular
+                if s.tabular is not None
+                else np.zeros(n_feat, dtype=np.float32)
+                for s in samples
+            ],
         )
     else:
         tabular = None
@@ -538,8 +552,8 @@ def collate_patients(samples: list[PatientSample]) -> dict[str, Any]:
     # image — zero-pad missing patients and variable N_patches
     img_present = [s.image for s in samples if s.image is not None]
     if img_present:
-        max_n     = max(a.shape[0] for a in img_present)
-        rest_dims = img_present[0].shape[1:]           # (C, H, W) or (feature_dim,)
+        max_n = max(a.shape[0] for a in img_present)
+        rest_dims = img_present[0].shape[1:]  # (C, H, W) or (feature_dim,)
         image = np.zeros((len(samples), max_n, *rest_dims), dtype=np.float32)
         for i, s in enumerate(samples):
             if s.image is not None:
@@ -550,16 +564,17 @@ def collate_patients(samples: list[PatientSample]) -> dict[str, Any]:
 
     return {
         "patient_ids": patient_ids,
-        "tabular":     tabular,
-        "image":       image,
-        "target":      targets,
-        "modalities":  modalities,
+        "tabular": tabular,
+        "image": image,
+        "target": targets,
+        "modalities": modalities,
     }
 
 
 # ---------------------------------------------------------------------------
 # Batch loader
 # ---------------------------------------------------------------------------
+
 
 class _BatchLoader:
     """Iterates a MultimodalDataset in mini-batches, yielding collated dicts.
@@ -577,16 +592,16 @@ class _BatchLoader:
 
     def __init__(
         self,
-        dataset:       MultimodalDataset,
-        batch_size:    int         = 32,
-        shuffle:       bool        = False,
-        seed:          int         = 42,
+        dataset: MultimodalDataset,
+        batch_size: int = 32,
+        shuffle: bool = False,
+        seed: int = 42,
         feature_names: list[str] | None = None,
     ) -> None:
-        self._dataset    = dataset
+        self._dataset = dataset
         self._batch_size = batch_size
-        self._shuffle    = shuffle
-        self._seed       = seed
+        self._shuffle = shuffle
+        self._seed = seed
         self.feature_names: list[str] | None = feature_names
 
     def __len__(self) -> int:
