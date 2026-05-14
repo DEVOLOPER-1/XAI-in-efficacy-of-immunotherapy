@@ -28,7 +28,8 @@ dataset:
   # before startup. The parquet file is not committed in this repository.
   tabular_file:    stad_rna.parquet
   target_col:      TMB   # regression target column
-
+#  run_preprocessor_pipeline: false (default: false)
+#  preprocessor_save_path: "freezed-models/runs/checkpoints/tabular_preprocessing_pipeline.pkl"
   val_ratio:    0.15    # 15% of patients held out for validation
   seed:         42      # controls the deterministic train/val split
 #  batch_size:   512     not used for decision tree, but kept here for config completeness
