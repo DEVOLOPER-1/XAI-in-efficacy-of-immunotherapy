@@ -137,8 +137,8 @@ class TabularStore:
                 f"Available columns: {list(raw.columns)}"
             )
 
+        raw = raw.drop_duplicates(subset=[patient_id_col], keep='first')
         raw = raw.set_index(patient_id_col)
-
         # Separate target from features
         if target_col in raw.columns:
             self._targets: pd.Series = raw.pop(target_col).astype(float)
