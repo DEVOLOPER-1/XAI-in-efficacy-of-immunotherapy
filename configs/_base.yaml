@@ -30,6 +30,7 @@ dataset:
 #    seed: 42
 #    batch_size: 32
 #    image_size: 224
+    "patients_split_file":  "data/processed/master_patient_splits.csv",
 model:
 #    category: "tabular_only"        # "tabular_only", "image_only", or "fusion"
 #    fusion_strategy: "early"        # "early" or "late"

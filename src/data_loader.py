@@ -612,38 +612,41 @@ class _BatchLoader:
 # Public: build_dataloaders
 # ---------------------------------------------------------------------------
 
-def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader]:
-    """Construct train and validation dataloaders from the merged config.
+def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader, _BatchLoader | None]:
+    """Construct train, validation, and test dataloaders from the merged config.
 
     Args:
         cfg: Merged experiment config (from src.config.load_config).
 
     Returns:
-        (train_loader, val_loader) — _BatchLoader instances.
+        (train_loader, val_loader, test_loader) — _BatchLoader instances.
+        test_loader will be None if no test split is generated.
     """
-    ds_cfg  = cfg.get("dataset")   or DotDict({})
+    ds_cfg = cfg.get("dataset") or DotDict({})
     mod_cfg = cfg.get("modalities") or DotDict({})
 
-    data_root    = Path(ds_cfg.get("data_root",      "data"))
-    manifest_tsv = data_root / ds_cfg.get("manifest_tsv", "gdc_manifest.tsv")  # NEW
-    tabular_file = data_root / ds_cfg.get("tabular_file",  "clinical.csv")
-    images_dir   = data_root / ds_cfg.get("images_dir",    "images")
-    features_dir = data_root / ds_cfg.get("features_dir",  "features")
-    target_col   = ds_cfg.get("target_col",      "survival_months")
-    id_col       = ds_cfg.get("patient_id_col",  "PATIENT_ID")
-    val_ratio    = ds_cfg.get("val_ratio",        0.15)
-    seed         = ds_cfg.get("seed",             42)
-    batch_size   = ds_cfg.get("batch_size",       32)
+    data_root = Path(ds_cfg.get("data_root", "data"))
+    manifest_tsv = data_root / ds_cfg.get("manifest_tsv", "gdc_manifest.tsv")
+    tabular_file = data_root / ds_cfg.get("tabular_file", "clinical.csv")
+    images_dir = data_root / ds_cfg.get("images_dir", "images")
+    features_dir = data_root / ds_cfg.get("features_dir", "features")
+    split_file = ds_cfg.get("patients_split_file", None)  # <-- NEW
+
+    target_col = ds_cfg.get("target_col", "survival_months")
+    id_col = ds_cfg.get("patient_id_col", "PATIENT_ID")
+    val_ratio = ds_cfg.get("val_ratio", 0.15)
+    seed = ds_cfg.get("seed", 42)
+    batch_size = ds_cfg.get("batch_size", 32)
     preextracted = ds_cfg.get("use_preextracted", True)
-    patch_size   = ds_cfg.get("patch_size",       256)
-    max_patches  = ds_cfg.get("max_patches",      16)
-    image_size   = ds_cfg.get("image_size",       224)
-    use_tabular  = mod_cfg.get("tabular",  True)
-    use_image    = mod_cfg.get("image",    True)
+    patch_size = ds_cfg.get("patch_size", 256)
+    max_patches = ds_cfg.get("max_patches", 16)
+    image_size = ds_cfg.get("image_size", 224)
+    use_tabular = mod_cfg.get("tabular", True)
+    use_image = mod_cfg.get("image", True)
 
     # -- Instantiate stores -------------------------------------------------
     tabular_store: TabularStore | None = None
-    slide_store:   SlideStore   | None = None
+    slide_store: SlideStore | None = None
 
     if use_tabular:
         tabular_store = TabularStore(tabular_file, id_col, target_col)
@@ -656,7 +659,7 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader]:
             patch_size=patch_size,
             max_patches=max_patches,
             image_size=image_size,
-            manifest_path=manifest_tsv,  # NEW
+            manifest_path=manifest_tsv,
         )
 
     # -- Intersection of all known patient IDs (Strict Multimodal) --
@@ -669,8 +672,9 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader]:
             img_ids = (
                 {p.stem for p in scan_dir.glob("*.npy")}
                 if preextracted
-                else set(slide_store._manifest_map.keys())  # <-- THE FIX
+                else set(slide_store._manifest_map.keys())
             )
+
     if use_tabular and use_image:
         all_ids = tabular_ids.intersection(img_ids)
         log.info(f"Strict Multimodal mode: Found {len(all_ids)} patients with BOTH RNA and WSI.")
@@ -684,49 +688,76 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader]:
     if not all_ids:
         raise RuntimeError("No valid patients found after intersection.")
 
-    # -- Deterministic train / val split -----------------------------------
-    sorted_ids = sorted(all_ids)
-    rng        = random.Random(seed)
-    rng.shuffle(sorted_ids)
-    n_val      = max(1, int(len(sorted_ids) * val_ratio))
-    val_ids    = sorted_ids[:n_val]
-    train_ids  = sorted_ids[n_val:]
+    # -- Custom Split Logic -----------------------------------
+    test_ids = []
 
-    log.info(
-        "Patient split: train=%d, val=%d (seed=%d, val_ratio=%.2f)",
-        len(train_ids), len(val_ids), seed, val_ratio,
-    )
+    if split_file and Path(split_file).exists():
+        log.info(f"Loading deterministic patient splits from {split_file}")
+        splits_df = pd.read_csv(split_file)
 
+        # --- NEW: Missing Data Warning Logic ---
+        master_ids = set(splits_df[id_col])
+        missing_ids = master_ids - all_ids
+
+        if missing_ids:
+            log.warning(
+                f"⚠️ MISSING DATA WARNING: {len(missing_ids)} patients from the master "
+                f"split file are missing required modalities and were EXCLUDED."
+            )
+            # Log a small sample so teammates know exactly which IDs to go hunt down
+            sample_miss = list(missing_ids)[:5]
+            log.warning(f"⚠️ Sample of missing IDs: {sample_miss} ...")
+        # ---------------------------------------
+
+        # Filter the master split file to ONLY include patients
+        # that survived the modality intersection (all_ids)
+        valid_splits = splits_df[splits_df[id_col].isin(all_ids)]
+
+        train_ids = valid_splits[valid_splits['split'] == 'train'][id_col].tolist()
+        val_ids = valid_splits[valid_splits['split'] == 'val'][id_col].tolist()
+        test_ids = valid_splits[valid_splits['split'] == 'test'][id_col].tolist()
+
+        log.info(
+            f"Split distribution for current modalities: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}")
+
+    else:
+        # Fallback to the original random split if no file is provided
+        log.info("No split file provided. Falling back to random deterministic split.")
+        sorted_ids = sorted(all_ids)
+        rng = random.Random(seed)
+        rng.shuffle(sorted_ids)
+        n_val = max(1, int(len(sorted_ids) * val_ratio))
+        val_ids = sorted_ids[:n_val]
+        train_ids = sorted_ids[n_val:]
+
+    # -- Fit Tabular Scaler -----------------------------------
     if tabular_store:
         save_dir = Path(cfg.training.get("save_dir", "freezed-models/runs/checkpoints"))
         prep_path = save_dir / "dnn_preprocessor.pkl"
 
-        # If we are doing Multimodal Fusion, we MUST load Phase 1 statistics
         if cfg.model.get("category") == "fusion":
             tabular_store.load_and_scale(prep_path)
         else:
-            # Otherwise, we are training from scratch (Phase 1). Fit and save.
+            # Notice how we explicitly pass ONLY train_ids to prevent data leakage!
             tabular_store.fit_and_scale(train_ids, prep_path)
 
-    train_ds = MultimodalDataset(tabular_store, slide_store, train_ids, shuffle=True,  seed=seed)
-    val_ds   = MultimodalDataset(tabular_store, slide_store, val_ids,   shuffle=False)
+    # -- Build Datasets and Loaders -----------------------------------
+    train_ds = MultimodalDataset(tabular_store, slide_store, train_ids, shuffle=True, seed=seed)
+    val_ds = MultimodalDataset(tabular_store, slide_store, val_ids, shuffle=False)
 
-    train_loader = _BatchLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        seed=seed,
-        feature_names=tabular_store.feature_names if tabular_store else None,
-    )
-    val_loader = _BatchLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        feature_names=tabular_store.feature_names if tabular_store else None,
-    )
+    feature_names = tabular_store.feature_names if tabular_store else None
+
+    train_loader = _BatchLoader(train_ds, batch_size=batch_size, shuffle=True, seed=seed, feature_names=feature_names)
+    val_loader = _BatchLoader(val_ds, batch_size=batch_size, shuffle=False, feature_names=feature_names)
+
+    test_loader = None
+    if test_ids:
+        test_ds = MultimodalDataset(tabular_store, slide_store, test_ids, shuffle=False)
+        test_loader = _BatchLoader(test_ds, batch_size=batch_size, shuffle=False, feature_names=feature_names)
 
     log.info(
-        "Dataloaders: train=%d batches, val=%d batches (batch_size=%d)",
-        len(train_loader), len(val_loader), batch_size,
+        "Dataloaders: train=%d batches, val=%d batches, test=%d batches (batch_size=%d)",
+        len(train_loader), len(val_loader), len(test_loader) if test_loader else 0, batch_size,
     )
-    return train_loader, val_loader
+
+    return train_loader, val_loader, test_loader
