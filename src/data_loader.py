@@ -50,6 +50,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import logging
 import math
+from email.policy import default
 from pathlib import Path
 import random
 from typing import Any, Iterator
@@ -748,13 +749,13 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader, _BatchL
     # -- Fit Tabular Scaler -----------------------------------
     if tabular_store:
         save_dir = Path(cfg.training.get("save_dir", "freezed-models/runs/checkpoints"))
-        prep_path = save_dir / "dnn_preprocessor.pkl"
+        prep_path = ds_cfg.get("preprocessor_save_path", None)
 
-        if cfg.model.get("category") == "fusion":
-            tabular_store.load_and_scale(prep_path)
-        else:
-            # Notice how we explicitly pass ONLY train_ids to prevent data leakage!
-            tabular_store.fit_and_scale(train_ids, prep_path)
+        if ds_cfg.get("run_preprocessor_pipeline", default=False):
+            if prep_path:
+                tabular_store.load_and_scale(prep_path)
+            else:
+                tabular_store.fit_and_scale(train_ids, "freezed-models/runs/checkpoints/tabular_preprocessing_pipeline.pkl")
 
     # -- Build Datasets and Loaders -----------------------------------
     train_ds = MultimodalDataset(tabular_store, slide_store, train_ids, shuffle=True, seed=seed)
