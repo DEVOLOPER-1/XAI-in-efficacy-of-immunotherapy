@@ -80,7 +80,7 @@ def r2_score(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
     ss_tot = np.sum((yt - np.mean(yt)) ** 2)
     if ss_tot == 0.0:
         return float("nan")  # target has zero variance — metric undefined
-    return float(1.0 - ss_res / ss_tot)
+    return float(1.0 - float(ss_res) / float(ss_tot))
 
 
 def pearson_r(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
@@ -427,14 +427,16 @@ def save_checkpoint(model: Any, path: str | Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        import torch
+        from importlib import import_module
+
+        torch = import_module("torch")
 
         if hasattr(model, "state_dict"):
             torch.save(model.state_dict(), path)
             log.info("Torch checkpoint saved → %s", path)
             return
     except ImportError:
-        pass
+        torch = None  # type: ignore[assignment]
 
     with open(path, "wb") as fh:
         pickle.dump(model, fh)
@@ -457,7 +459,9 @@ def load_checkpoint(model: Any, path: str | Path) -> Any:
         return model
 
     try:
-        import torch
+        from importlib import import_module
+
+        torch = import_module("torch")
 
         if hasattr(model, "load_state_dict"):
             state = torch.load(path, map_location="cpu", weights_only=True)
@@ -465,12 +469,58 @@ def load_checkpoint(model: Any, path: str | Path) -> Any:
             log.info("Torch checkpoint loaded from %s", path)
             return model
     except ImportError:
-        pass
+        torch = None  # type: ignore[assignment]
 
     with open(path, "rb") as fh:
         loaded = pickle.load(fh)
     log.info("Pickle checkpoint loaded from %s", path)
     return loaded
+
+
+# ---------------------------------------------------------------------------
+# Generic helpers used by training / inference / explainability
+# ---------------------------------------------------------------------------
+
+
+def as_numpy(value: Any | None) -> np.ndarray | None:
+    """Convert common tensor-like inputs to a NumPy array.
+
+    Supports NumPy arrays, pandas objects, and torch tensors without importing
+    torch at module import time.
+    """
+    if value is None:
+        return None
+    if isinstance(value, np.ndarray):
+        return value
+    if hasattr(value, "detach"):
+        return value.detach().cpu().numpy()
+    if hasattr(value, "cpu") and hasattr(value, "numpy"):
+        try:
+            return value.cpu().numpy()
+        except Exception:  # pragma: no cover - best-effort conversion
+            pass
+    return np.asarray(value)
+
+
+def save_json(payload: Any, path: str | Path) -> Path:
+    """Write *payload* to *path* as pretty-printed JSON and return the path."""
+    import json
+
+    def _default(value: Any) -> Any:
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.integer, np.floating)):
+            return value.item()
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serialisable")
+
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, default=_default)
+        fh.write("\n")
+    return output
 
 
 # ---------------------------------------------------------------------------

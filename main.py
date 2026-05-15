@@ -6,10 +6,10 @@ Usage examples:
     # Train
     python main.py --config configs/experiments/random_forest.yaml --mode train
 
-    # Evaluate on validation split
+    # Run explainability audit on validation split
     python main.py --config configs/experiments/random_forest.yaml --mode eval
 
-    # Generate Kaggle submission CSV from public-LB sequences
+    # Export an explainability manifest for a chosen split
     python main.py --config configs/experiments/random_forest.yaml --mode predict \
                    --output submission.csv
 
@@ -54,7 +54,9 @@ def _mode_train(cfg_path: str, args: argparse.Namespace) -> None:
 
     cfg = load_config(cfg_path)
     logging.getLogger(__name__).info(
-        "Mode: TRAIN | Config: %s | Model: %s", cfg_path, cfg.model.type
+        "Mode: TRAIN | Config: %s | Model: %s",
+        cfg_path,
+        (cfg.get("model") or {}).get("type", "unknown"),
     )
     scores = train(cfg)
 
@@ -70,7 +72,7 @@ def _mode_train(cfg_path: str, args: argparse.Namespace) -> None:
 
 
 def _mode_eval(cfg_path: str, args: argparse.Namespace) -> None:
-    """Evaluate a trained tracker on an annotated split."""
+    """Run the explainability audit on a named split."""
     from src.config import load_config
     from src.inference import evaluate
 
@@ -88,7 +90,7 @@ def _mode_eval(cfg_path: str, args: argparse.Namespace) -> None:
 
 
 def _mode_predict(cfg_path: str, args: argparse.Namespace) -> None:
-    """Generate a Kaggle submission CSV from public-LB sequences."""
+    """Export the explainability report manifest to a CSV file."""
     from src.config import load_config
     from src.inference import predict
 
@@ -131,13 +133,13 @@ def _mode_info(cfg_path: str, _args: argparse.Namespace) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main.py",
-        description="AIC-4 Zerone — Aerial Single-Object Tracker CLI",
+        description="WhiteBox — multimodal cancer explainability CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             "  python main.py --config configs/experiments/random_forest.yaml --mode train\n"
-            "  python main.py --config configs/experiments/csrt_baseline.yaml  --mode eval  --split val\n"
-            "  python main.py --config configs/experiments/random_forest.yaml  --mode predict --output sub.csv\n"
+            "  python main.py --config configs/experiments/random_forest.yaml  --mode eval  --split val\n"
+            "  python main.py --config configs/experiments/random_forest.yaml  --mode predict --output explanations.csv\n"
             "  python main.py --config configs/experiments/random_forest.yaml  --mode info\n"
         ),
     )
@@ -154,7 +156,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "-m",
         choices=["train", "eval", "predict", "info"],
         default="train",
-        help="Execution mode (default: train)",
+        help="Execution mode (train | eval | predict | info; default: train)",
     )
     parser.add_argument(
         "--split",
