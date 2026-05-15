@@ -25,6 +25,8 @@ dependencies = [
     "wandb>=0.19.0",
 ]
 
+# uv sync --extra dl --extra dev --extra scrapping
+
 [project.optional-dependencies]
 # Install via: uv pip install -e ".[dl]"
 dl = [
