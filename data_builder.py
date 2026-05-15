@@ -1,5 +1,4 @@
 # src/data_builder.py
-import os
 import shutil
 import cv2
 import torch
@@ -160,6 +159,7 @@ def extract_patient_features(
     white_thresh = cfg["processing"]["white_thresh"]
     white_tol = cfg["processing"]["white_tolerance"]
     do_norm = cfg["training"].get("normalize", True)
+    mean = std = None
 
     # Precompute normalization tensors if enabled
     if do_norm:
@@ -196,7 +196,7 @@ def extract_patient_features(
             )
 
             # Apply optional normalization
-            if do_norm:
+            if do_norm and mean is not None and std is not None:
                 img_t = (img_t - mean) / std
 
             # Forward pass
@@ -259,7 +259,7 @@ def main(base_config: str, override_config: Optional[str] = None) -> None:
     random.seed(cfg["training"]["seed"])
 
     manifest_valid = prepare_data(cfg)
-    model, device = load_feature_extractor(cfg)
+    model, processor, device, feature_dim, normalize_cfg = load_feature_extractor(cfg)
 
     chunk_size = cfg["processing"]["chunk_size"]
     for start_idx in tqdm(range(0, manifest_valid.shape[0], chunk_size), desc="Chunks"):
