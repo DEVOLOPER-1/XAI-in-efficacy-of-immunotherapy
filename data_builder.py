@@ -1,4 +1,21 @@
-# src/data_builder.py
+# Resulting format
+
+"""
+data/
+├── clinical.csv
+├── images/
+│   └── <PATIENT_ID>/
+│       ├── tile_000.png
+│       ├── tile_001.png
+│       └── ...
+└── features/
+    └── <PATIENT_ID>.npy
+
+"""
+
+
+
+import os
 import shutil
 import cv2
 import torch
@@ -30,8 +47,98 @@ def load_config(base_path: str, override_path: Optional[str] = None) -> Dict[str
 
 
 def setup_dirs(cfg: Dict[str, Any]) -> None:
-    for dir_key in ["root_data_dir", "features_dir", "temp_svs_dir"]:
+    for dir_key in ["root_data_dir", "images_dir", "features_dir", "temp_svs_dir"]:
         Path(cfg["paths"][dir_key]).mkdir(parents=True, exist_ok=True)
+
+
+def _output_images_dir(cfg: Dict[str, Any]) -> Path:
+    return Path(cfg["paths"].get("images_dir", cfg["paths"]["temp_svs_dir"]))
+
+
+def _feature_output_path(cfg: Dict[str, Any], patient_id: str) -> Path:
+    return Path(cfg["paths"]["features_dir"]) / f"{patient_id}.npy"
+
+
+def _patient_image_dir(cfg: Dict[str, Any], patient_id: str) -> Path:
+    return _output_images_dir(cfg) / patient_id
+
+
+def _feature_vector_from_output(output: Any) -> np.ndarray:
+    """Convert a model output tensor/tuple/dict into a 1-D float32 feature vector."""
+    if isinstance(output, (tuple, list)):
+        output = output[0]
+    if isinstance(output, dict):
+        output = output[list(output.keys())[0]]
+
+    if hasattr(output, "last_hidden_state"):
+        output = output.last_hidden_state
+
+    if not torch.is_tensor(output):
+        output = torch.as_tensor(output)
+
+    feat = output.detach()
+    if feat.ndim == 0:
+        feat = feat.view(1)
+    elif feat.ndim == 1:
+        pass
+    elif feat.ndim == 2:
+        feat = feat[0] if feat.shape[0] == 1 else feat.mean(dim=0)
+    else:
+        # Vision transformers usually return [B, tokens, hidden]; take CLS token.
+        feat = feat[:, 0, :] if feat.ndim >= 3 else feat
+        feat = feat[0] if feat.ndim == 2 and feat.shape[0] == 1 else feat.mean(dim=0)
+
+    return feat.cpu().numpy().astype(np.float32)
+
+
+def _save_tile_png(tile_rgb: np.ndarray, output_path: Path) -> None:
+    """Persist an RGB tile to PNG on disk."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tile_bgr = cv2.cvtColor(tile_rgb, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(str(output_path), tile_bgr)
+
+
+def _locate_downloaded_wsi(temp_root: Path, row: dict[str, Any]) -> Path | None:
+    """Best-effort search for a downloaded WSI inside the temporary GDC directory."""
+    candidate_dirs = [
+        row.get("id"),
+        row.get("file_id"),
+        row.get("File ID"),
+        row.get("Case ID"),
+    ]
+    candidate_names = [
+        row.get("filename"),
+        row.get("file_name"),
+        row.get("File Name"),
+    ]
+
+    for dir_name in candidate_dirs:
+        if not dir_name:
+            continue
+        base = temp_root / str(dir_name)
+        if base.is_file() and base.suffix.lower() in {".svs", ".tif", ".tiff"}:
+            return base
+        if not base.exists():
+            continue
+
+        for name in candidate_names:
+            if not name:
+                continue
+            candidate = base / str(name)
+            if candidate.exists() and candidate.is_file():
+                return candidate
+
+        for ext in ("*.svs", "*.tif", "*.tiff"):
+            matches = sorted(base.rglob(ext))
+            if matches:
+                return matches[0]
+
+    for ext in ("*.svs", "*.tif", "*.tiff"):
+        matches = sorted(temp_root.rglob(ext))
+        if matches:
+            return matches[0]
+
+    return None
 
 
 def prepare_data(cfg: Dict[str, Any]) -> pl.DataFrame:
@@ -142,10 +249,14 @@ def load_feature_extractor(cfg: Dict[str, Any]) -> tuple:
     return model, processor, device, feature_dim, normalize_cfg
 
 
-def extract_patient_features(
-    svs_path: Path, model: torch.nn.Module, device: torch.device, cfg: Dict[str, Any]
+def extract_patient_tiles_and_features(
+    svs_path: Path,
+    patient_id: str,
+    model: torch.nn.Module,
+    device: torch.device,
+    cfg: Dict[str, Any],
 ) -> np.ndarray:
-    """Generalized patch feature extraction. Optional normalization via config."""
+    """Extract tiles from a slide, save them as PNGs, and return patch features."""
     slide = openslide.OpenSlide(str(svs_path))
     w, h = slide.dimensions
     pw, ph = cfg["processing"]["patch_size"], cfg["processing"]["patch_size"]
@@ -154,12 +265,18 @@ def extract_patient_features(
     random.shuffle(indices)
 
     features = []
+    patient_image_dir = _patient_image_dir(cfg, patient_id)
+    if patient_image_dir.exists():
+        for existing_png in patient_image_dir.glob("*.png"):
+            existing_png.unlink()
+    patient_image_dir.mkdir(parents=True, exist_ok=True)
     resize_to = cfg["processing"]["resize_to"]
     max_patches = cfg["processing"]["max_patches"]
     white_thresh = cfg["processing"]["white_thresh"]
     white_tol = cfg["processing"]["white_tolerance"]
     do_norm = cfg["training"].get("normalize", True)
     mean = std = None
+    tile_idx = 0
 
     # Precompute normalization tensors if enabled
     if do_norm:
@@ -202,14 +319,10 @@ def extract_patient_features(
             # Forward pass
             feat = model(img_t.unsqueeze(0))
 
-            # Handle models that return tuples, dicts, or extra dimensions
-            if isinstance(feat, (tuple, list)):
-                feat = feat[0]
-            if isinstance(feat, dict):
-                feat = feat[list(feat.keys())[0]]
-
-            feat = feat.squeeze().cpu().numpy()
-            features.append(feat)
+            feat_vec = _feature_vector_from_output(feat)
+            features.append(feat_vec)
+            _save_tile_png(tile_resized, patient_image_dir / f"tile_{tile_idx:03d}.png")
+            tile_idx += 1
 
     slide.close()
 
@@ -218,26 +331,27 @@ def extract_patient_features(
         with torch.no_grad():
             dummy = torch.zeros(1, 3, resize_to, resize_to, device=device)
             dummy_feat = model(dummy)
-            if isinstance(dummy_feat, (tuple, list)):
-                dummy_feat = dummy_feat[0]
-            if isinstance(dummy_feat, dict):
-                dummy_feat = dummy_feat[list(dummy_feat.keys())[0]]
-            feat_dim = dummy_feat.squeeze().shape[0]
-            features = [np.zeros(feat_dim, dtype=np.float32)]
-
-    # Pad to max_patches
-    while len(features) < max_patches:
-        features.append(features[-1])
+            feat_vec = _feature_vector_from_output(dummy_feat)
+            features = [np.zeros_like(feat_vec, dtype=np.float32)]
+        blank_tile = np.zeros((resize_to, resize_to, 3), dtype=np.uint8)
+        _save_tile_png(blank_tile, patient_image_dir / "tile_000.png")
 
     return np.stack(features)  # Shape: (16, feature_dim)
 
 
 def download_chunk(chunk_df: pl.DataFrame, cfg: Dict[str, Any], chunk_idx: int) -> None:
+    gdc_client = _resolve_gdc_client()
+    if gdc_client is None:
+        raise RuntimeError(
+            "Unable to find a runnable `gdc-client` binary. Install the GDC Data Transfer Tool "
+            "or place an executable `gdc-client` file in the project root."
+        )
+
     chunk_manifest = Path(f"temp_chunk_{chunk_idx}.txt")
     chunk_df.write_csv(chunk_manifest, separator="\t")
 
     cmd = [
-        "gdc-client",
+        str(gdc_client),
         "download",
         "-m",
         str(chunk_manifest),
@@ -250,9 +364,35 @@ def download_chunk(chunk_df: pl.DataFrame, cfg: Dict[str, Any], chunk_idx: int) 
     chunk_manifest.unlink()
 
 
+def _resolve_gdc_client() -> Path | None:
+    """Return a runnable gdc-client executable from PATH or the project root."""
+    candidate_names = ["gdc-client"]
+    search_dirs = os.environ.get("PATH", "").split(os.pathsep)
+
+    for directory in search_dirs:
+        if not directory:
+            continue
+        for name in candidate_names:
+            candidate = Path(directory) / name
+            if candidate.exists() and candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+
+    local_binary = Path(__file__).resolve().parent / "gdc-client"
+    if local_binary.exists() and local_binary.is_file() and os.access(local_binary, os.X_OK):
+        return local_binary
+
+    return None
+
+
 def main(base_config: str, override_config: Optional[str] = None) -> None:
     cfg = load_config(base_config, override_config)
     setup_dirs(cfg)
+
+    if _resolve_gdc_client() is None:
+        raise RuntimeError(
+            "Cannot start the build: `gdc-client` is missing. Install it or add an executable "
+            "`gdc-client` file to the project root, then rerun `python data_builder.py`."
+        )
 
     torch.manual_seed(cfg["training"]["seed"])
     np.random.seed(cfg["training"]["seed"])
@@ -268,18 +408,21 @@ def main(base_config: str, override_config: Optional[str] = None) -> None:
 
         for row in chunk_df.iter_rows(named=True):
             pid = row["Case ID"]
-            svs_dir = Path(cfg["paths"]["temp_svs_dir"]) / row["id"]
-            svs_path = svs_dir / row["filename"]
-            feat_path = Path(cfg["paths"]["features_dir"]) / f"{pid}.npy"
+            temp_root = Path(cfg["paths"]["temp_svs_dir"])
+            svs_path = _locate_downloaded_wsi(temp_root, row)
+            feat_path = _feature_output_path(cfg, pid)
+            patient_image_dir = _patient_image_dir(cfg, pid)
 
-            if feat_path.exists():
+            if feat_path.exists() and patient_image_dir.exists() and any(patient_image_dir.glob("*.png")):
                 continue
-            if not svs_path.exists():
+            if svs_path is None or not svs_path.exists():
                 print(f"⚠️ Missing WSI for {pid}")
                 continue
 
             try:
-                features = extract_patient_features(svs_path, model, device, cfg)
+                features = extract_patient_tiles_and_features(
+                    svs_path, pid, model, device, cfg
+                )
                 np.save(feat_path, features)
             except Exception as e:
                 print(f"❌ Failed {pid}: {e}")
