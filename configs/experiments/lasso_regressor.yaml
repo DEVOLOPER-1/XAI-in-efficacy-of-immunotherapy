@@ -49,7 +49,7 @@ training:
 
 # ── Weights & Biases ────────────────────────────────────────────────────────
 wandb:
-  run_name: "lasso_alpha:0.1_scaled_iter:1e4"
+  run_name: "lasso_alpha:0.1_scaled_iter:1e4_logTMB"
   tags:
     - genetic_only
     - COAD
