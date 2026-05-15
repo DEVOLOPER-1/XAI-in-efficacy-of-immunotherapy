@@ -248,7 +248,10 @@ def auprc(
 
     return float(np.trapezoid(precision, recall))
 
-def huber_loss(y_true: Sequence[float], y_pred: Sequence[float], delta: float = 1.0) -> float:
+
+def huber_loss(
+    y_true: Sequence[float], y_pred: Sequence[float], delta: float = 1.0
+) -> float:
     """Huber Loss — matches PyTorch nn.HuberLoss(delta=1.0).
 
     Robust regression metric that acts like MSE for small errors
@@ -262,8 +265,9 @@ def huber_loss(y_true: Sequence[float], y_pred: Sequence[float], delta: float = 
     quadratic = np.minimum(abs_err, delta)
     linear = abs_err - quadratic
 
-    loss = 0.5 * (quadratic ** 2) + delta * linear
+    loss = 0.5 * (quadratic**2) + delta * linear
     return float(np.mean(loss))
+
 
 # ---------------------------------------------------------------------------
 # Omnibus metric dict — used by train.py and W&B logging
@@ -513,7 +517,9 @@ def save_json(payload: Any, path: str | Path) -> Path:
             return value.tolist()
         if isinstance(value, (np.integer, np.floating)):
             return value.item()
-        raise TypeError(f"Object of type {type(value).__name__} is not JSON serialisable")
+        raise TypeError(
+            f"Object of type {type(value).__name__} is not JSON serialisable"
+        )
 
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)

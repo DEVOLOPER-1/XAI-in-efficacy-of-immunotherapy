@@ -116,7 +116,9 @@ def run_explainability(
     exp_cfg = cfg.get("explainability") or DotDict({})
     model_cfg = cfg.get("model") or DotDict({})
 
-    methods_set = {m.lower().strip() for m in (methods or exp_cfg.get("methods", DEFAULT_METHODS))}
+    methods_set = {
+        m.lower().strip() for m in (methods or exp_cfg.get("methods", DEFAULT_METHODS))
+    }
     max_patients = int(max_patients or exp_cfg.get("max_patients", 3))
     background_size = int(exp_cfg.get("background_size", 32))
     seed = int(exp_cfg.get("seed", cfg.get("dataset", DotDict({})).get("seed", 42)))
@@ -125,7 +127,9 @@ def run_explainability(
     split_loaders = {"train": train_loader, "val": val_loader, "test": test_loader}
     if split not in split_loaders or split_loaders[split] is None:
         available = ", ".join(k for k, v in split_loaders.items() if v is not None)
-        raise ValueError(f"Unknown or unavailable split '{split}'. Available: [{available}].")
+        raise ValueError(
+            f"Unknown or unavailable split '{split}'. Available: [{available}]."
+        )
 
     selected_loader = split_loaders[split]
     assert selected_loader is not None
@@ -145,7 +149,8 @@ def run_explainability(
     output_dir = Path(
         output_dir
         or exp_cfg.get("output_dir")
-        or Path(training_cfg.get("save_dir", "logs/runs/checkpoints")) / f"{experiment_name}_explainability"
+        or Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
+        / f"{experiment_name}_explainability"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -168,8 +173,12 @@ def run_explainability(
         ),
         None,
     )
-    tabular_reference = next((s for s in split_samples if s.tabular is not None), paired_sample)
-    image_reference = next((s for s in split_samples if s.image is not None), paired_sample)
+    tabular_reference = next(
+        (s for s in split_samples if s.tabular is not None), paired_sample
+    )
+    image_reference = next(
+        (s for s in split_samples if s.image is not None), paired_sample
+    )
 
     # Separate explainability instances for each modality.
     if use_tabular and tabular_reference is not None:
@@ -257,11 +266,15 @@ def _explain_tabular_branch(
     background = _collect_tabular_matrix(train_samples, max_rows=background_size)
     eval_rows = _collect_tabular_matrix(split_samples, max_rows=max_patients)
     if background.size == 0 or eval_rows.size == 0:
-        log.warning("No tabular data available for explainability; skipping tabular branch.")
+        log.warning(
+            "No tabular data available for explainability; skipping tabular branch."
+        )
         return []
 
     feature_names = _infer_tabular_feature_names(split_samples)
-    reference_image = reference_sample.image if reference_sample.image is not None else None
+    reference_image = (
+        reference_sample.image if reference_sample.image is not None else None
+    )
     artifacts: list[ExplainabilityArtifact] = []
 
     if "shap" in methods:
@@ -384,7 +397,9 @@ def _explain_image_branch(
             )
         )
     else:
-        log.warning("No image data available for explainability; skipping image branch.")
+        log.warning(
+            "No image data available for explainability; skipping image branch."
+        )
 
     return artifacts
 
@@ -501,9 +516,13 @@ def _tabular_effect_curves(
     rng = np.random.default_rng(seed)
     n_features = background.shape[1]
     # Focus on the most variable features so the plots remain readable.
-    feature_order = np.argsort(np.nanvar(background, axis=0))[::-1][: min(3, n_features)]
+    feature_order = np.argsort(np.nanvar(background, axis=0))[::-1][
+        : min(3, n_features)
+    ]
 
-    fig, axes = plt.subplots(len(feature_order), 1, figsize=(10, 4 * len(feature_order)))
+    fig, axes = plt.subplots(
+        len(feature_order), 1, figsize=(10, 4 * len(feature_order))
+    )
     if len(feature_order) == 1:
         axes = [axes]
 
@@ -543,7 +562,9 @@ def _tabular_effect_curves(
                 row_curve.append(float(pred[0]))
             ice_curves.append(np.asarray(row_curve, dtype=np.float32))
 
-        ace_curve = np.cumsum(np.asarray(pdp_values) - np.mean(pdp_values)) / np.arange(1, len(grid) + 1)
+        ace_curve = np.cumsum(np.asarray(pdp_values) - np.mean(pdp_values)) / np.arange(
+            1, len(grid) + 1
+        )
 
         for curve in ice_curves:
             ax.plot(grid, curve, color="tab:blue", alpha=0.25, linewidth=1)
@@ -694,7 +715,9 @@ def _raw_image_shap_plot(
         explain_input: Any = explain_tensor
 
         class _ImageWrapper(torch.nn.Module):
-            def __init__(self, base_model: Any, fixed_tabular: np.ndarray | None) -> None:
+            def __init__(
+                self, base_model: Any, fixed_tabular: np.ndarray | None
+            ) -> None:
                 super().__init__()
                 self.base_model = base_model
                 self.fixed_tabular = fixed_tabular
@@ -751,7 +774,9 @@ def _raw_image_lime_plot(
         explainer = lime_image.LimeImageExplainer(random_state=seed)
 
         def predict_fn(images: np.ndarray) -> np.ndarray:
-            batch = np.stack([_display_tile_to_model_tile(img) for img in images], axis=0)
+            batch = np.stack(
+                [_display_tile_to_model_tile(img) for img in images], axis=0
+            )
             preds = _predict_with_model(
                 model,
                 image=batch[:, None, ...],
@@ -767,7 +792,9 @@ def _raw_image_lime_plot(
             hide_color=0,
             num_samples=300,
         )
-        temp, mask = exp.get_image_and_mask(exp.top_labels[0], positive_only=True, num_features=10, hide_rest=False)
+        temp, mask = exp.get_image_and_mask(
+            exp.top_labels[0], positive_only=True, num_features=10, hide_rest=False
+        )
         overlay = _blend_mask(temp / 255.0 if temp.max() > 1.5 else temp, mask)
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         axes[0].imshow(display_tile)
@@ -824,13 +851,17 @@ def _raw_image_gradcam_plot(
                 tab = torch.from_numpy(reference_tabular).float().unsqueeze(0)
             output = model(image_tensor, tab).reshape(-1)
             score = output[0]
-            model_module.zero_grad(set_to_none=True) if hasattr(model_module, "zero_grad") else None
+            model_module.zero_grad(set_to_none=True) if hasattr(
+                model_module, "zero_grad"
+            ) else None
             score.backward()
 
             if "value" not in activations or "value" not in gradients:
                 return None
 
-            cam = gradients["value"].mean(dim=(2, 3), keepdim=True) * activations["value"]
+            cam = (
+                gradients["value"].mean(dim=(2, 3), keepdim=True) * activations["value"]
+            )
             cam = cam.mean(dim=1)[0].cpu().numpy()
             cam = np.maximum(cam, 0)
             if np.max(cam) > 0:
@@ -838,7 +869,9 @@ def _raw_image_gradcam_plot(
             cam = plt.imshow  # silence type checker; replaced immediately below
             del cam
 
-            cam = gradients["value"].mean(dim=(2, 3), keepdim=True) * activations["value"]
+            cam = (
+                gradients["value"].mean(dim=(2, 3), keepdim=True) * activations["value"]
+            )
             cam = cam.mean(dim=1)[0].cpu().numpy()
             cam = np.maximum(cam, 0)
             if np.max(cam) > 0:
@@ -909,7 +942,9 @@ def _image_effect_curves(
             curve.append(float(pred[0]))
         ice_curves.append(np.asarray(curve, dtype=np.float32))
 
-    ace_curve = np.cumsum(np.asarray(pdp_values) - np.mean(pdp_values)) / np.arange(1, len(scale_grid) + 1)
+    ace_curve = np.cumsum(np.asarray(pdp_values) - np.mean(pdp_values)) / np.arange(
+        1, len(scale_grid) + 1
+    )
 
     fig, ax = plt.subplots(figsize=(10, 6))
     for curve in ice_curves:
@@ -948,11 +983,15 @@ def _explain_image_feature_branch(
     background = _collect_image_feature_matrix(train_samples, max_rows=background_size)
     explain_rows = _collect_image_feature_matrix(split_samples, max_rows=max_patients)
     if background.size == 0 or explain_rows.size == 0:
-        log.warning("No image feature vectors available; skipping image-feature branch.")
+        log.warning(
+            "No image feature vectors available; skipping image-feature branch."
+        )
         return []
 
     feature_names = [f"image_feature_{i}" for i in range(background.shape[1])]
-    reference_image = reference_sample.image if reference_sample.image is not None else None
+    reference_image = (
+        reference_sample.image if reference_sample.image is not None else None
+    )
     artifacts: list[ExplainabilityArtifact] = []
 
     if "shap" in methods:
@@ -1057,7 +1096,9 @@ def _load_model(cfg: DotDict) -> Any:
         log.info("Loaded checkpoint for explainability: %s", path)
         break
     else:
-        log.warning("No checkpoint found; explainability will use the current model weights.")
+        log.warning(
+            "No checkpoint found; explainability will use the current model weights."
+        )
 
     return model
 
@@ -1066,9 +1107,13 @@ def _collect_samples(loader: Any) -> list[PatientSample]:
     try:
         dataset = loader._dataset
     except AttributeError as exc:  # pragma: no cover - defensive path
-        raise RuntimeError("Batch loader does not expose its dataset; cannot build explanations.") from exc
+        raise RuntimeError(
+            "Batch loader does not expose its dataset; cannot build explanations."
+        ) from exc
     if dataset is None:
-        raise RuntimeError("Batch loader does not expose its dataset; cannot build explanations.")
+        raise RuntimeError(
+            "Batch loader does not expose its dataset; cannot build explanations."
+        )
     dataset_size = len(dataset)
     return [dataset[i] for i in range(dataset_size)]
 
@@ -1081,7 +1126,9 @@ def _collect_tabular_matrix(samples: list[PatientSample], max_rows: int) -> np.n
     return np.asarray(rows, dtype=np.float32)
 
 
-def _collect_image_feature_matrix(samples: list[PatientSample], max_rows: int) -> np.ndarray:
+def _collect_image_feature_matrix(
+    samples: list[PatientSample], max_rows: int
+) -> np.ndarray:
     rows: list[np.ndarray] = []
     for sample in samples:
         if sample.image is None or sample.image.ndim != 2:
@@ -1114,7 +1161,9 @@ def _build_summary(artifacts: list[ExplainabilityArtifact]) -> dict[str, float]:
     modality_counts: dict[str, int] = {}
     method_counts: dict[str, int] = {}
     for artifact in artifacts:
-        modality_counts[artifact.modality] = modality_counts.get(artifact.modality, 0) + 1
+        modality_counts[artifact.modality] = (
+            modality_counts.get(artifact.modality, 0) + 1
+        )
         method_counts[artifact.method] = method_counts.get(artifact.method, 0) + 1
 
     summary: dict[str, float] = {
@@ -1158,20 +1207,32 @@ def _predict_with_model(
     """Predict using either sklearn-style or torch-style models."""
     # Fast path for classical tabular models.
     if tabular is not None and hasattr(model, "predict") and image is None:
-        return np.asarray(model.predict(np.asarray(tabular, dtype=np.float32)), dtype=np.float32).reshape(-1)
+        return np.asarray(
+            model.predict(np.asarray(tabular, dtype=np.float32)), dtype=np.float32
+        ).reshape(-1)
 
     try:
         import torch
     except ImportError as exc:  # pragma: no cover - optional dependency
-        raise RuntimeError("PyTorch is required for image or multimodal explainability.") from exc
+        raise RuntimeError(
+            "PyTorch is required for image or multimodal explainability."
+        ) from exc
 
     device = _infer_device(model)
     image_tensor = _to_torch(image, device) if image is not None else None
     tabular_tensor = _to_torch(tabular, device) if tabular is not None else None
 
     if tabular_tensor is None and reference_tabular is not None:
-        tabular_tensor = torch.from_numpy(np.asarray(reference_tabular, dtype=np.float32)).float().to(device)
-        batch_size = image_tensor.shape[0] if image_tensor is not None else tabular_tensor.shape[0]
+        tabular_tensor = (
+            torch.from_numpy(np.asarray(reference_tabular, dtype=np.float32))
+            .float()
+            .to(device)
+        )
+        batch_size = (
+            image_tensor.shape[0]
+            if image_tensor is not None
+            else tabular_tensor.shape[0]
+        )
         tabular_tensor = tabular_tensor.expand(batch_size, -1)
 
     if image_tensor is not None and image_tensor.ndim == 4:
@@ -1208,7 +1269,9 @@ def _infer_device(model: Any) -> Any:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def _repeat_optional_image(image: np.ndarray | None, batch_size: int) -> np.ndarray | None:
+def _repeat_optional_image(
+    image: np.ndarray | None, batch_size: int
+) -> np.ndarray | None:
     if image is None:
         return None
     image = np.asarray(image, dtype=np.float32)
@@ -1217,7 +1280,9 @@ def _repeat_optional_image(image: np.ndarray | None, batch_size: int) -> np.ndar
     return np.repeat(image[None, ...], batch_size, axis=0)
 
 
-def _repeat_optional_tabular(tabular: np.ndarray | None, batch_size: int) -> np.ndarray | None:
+def _repeat_optional_tabular(
+    tabular: np.ndarray | None, batch_size: int
+) -> np.ndarray | None:
     if tabular is None:
         return None
     tabular = np.asarray(tabular, dtype=np.float32)
@@ -1292,6 +1357,3 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (np.integer, np.floating)):
         return value.item()
     return value
-
-
-

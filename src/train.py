@@ -121,6 +121,7 @@ def train(cfg: DotDict) -> dict[str, float]:
 
     # ── 3. Data ───────────────────────────────────────────────────────────────
     from src.data_loader import build_dataloaders
+
     train_loader, val_loader, _ = build_dataloaders(cfg)
     log.info(
         "Data ready — train: %d batches | val: %d batches",
@@ -166,17 +167,18 @@ def _train_neural(
     weight_decay = training_cfg.get("weight_decay", 1e-4)
     save_dir = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
     experiment_id = cfg.get("experiment_name") or "experiment"
-    threshold     = training_cfg.get("risk_threshold", None)
+    threshold = training_cfg.get("risk_threshold", None)
     save_path = save_dir / f"{cfg.wandb.run_name}_weights.pth"
 
     optimiser = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model._est.parameters()),
-        lr=lr, weight_decay=weight_decay,
+        lr=lr,
+        weight_decay=weight_decay,
     )
     criterion = nn.HuberLoss(delta=1.0)
 
     best_huber: float = float("inf")
-    best_metrics:  dict[str, float]  = {}
+    best_metrics: dict[str, float] = {}
 
     log.info(
         "Neural training — epochs: %d | val_every: %d | lr: %g",
@@ -194,7 +196,11 @@ def _train_neural(
         epoch_losses: list[float] = []
 
         for batch in train_loader:
-            image = _to_tensor(batch["image"]).to(device) if batch["image"] is not None else None
+            image = (
+                _to_tensor(batch["image"]).to(device)
+                if batch["image"] is not None
+                else None
+            )
             tabular = _to_tensor(batch["tabular"]).to(device)
             target = _to_tensor(batch["target"]).to(device)
 
@@ -222,8 +228,11 @@ def _train_neural(
 
             log.info(
                 "Epoch %d/%d — train_loss: %.4f | val_huber: %.4f | R²: %.4f",
-                epoch, num_epochs, mean_loss,
-                metrics["huber"], metrics["r2"]
+                epoch,
+                num_epochs,
+                mean_loss,
+                metrics["huber"],
+                metrics["r2"],
             )
 
             # Log to W&B only at validation steps (bandwidth-conscious)
@@ -245,7 +254,7 @@ def _train_neural(
                 save_checkpoint(model, save_path)
                 log.info("  ↳ New best Huber=%.4f — checkpoint saved.", best_huber)
 
-    if (training_cfg.get('upload_pickled_model', False)):
+    if training_cfg.get("upload_pickled_model", False):
         artifact = wandb.Artifact(name="run_weights", type="model")
         artifact.add_file(str(save_path))
         run.log_artifact(artifact)
@@ -264,12 +273,16 @@ def _neural_validate(
     device = next(model.parameters()).device  # Get device from model weights
     model.eval()
 
-    all_preds:   list[float] = []
+    all_preds: list[float] = []
     all_targets: list[float] = []
 
     with torch.no_grad():
         for batch in loader:
-            image = _to_tensor(batch["image"]).to(device) if batch["image"] is not None else None
+            image = (
+                _to_tensor(batch["image"]).to(device)
+                if batch["image"] is not None
+                else None
+            )
             tabular = _to_tensor(batch["tabular"]).to(device)
             targets = batch["target"]
 

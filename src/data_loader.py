@@ -4,7 +4,7 @@ src/data_loader.py — Multimodal Cancer Research data loading for Zerone.
 Expected data layout on disk (configured via cfg.dataset.*):
 
     data/
-    ├── clinical.csv                 ← tabular data; must contain a PATIENT_ID column
+    ├── clinical.csv                 ← tabular data; must contain a PATIENT_ID column # COAD Colon adenocarcinoma
     │                                   + genomics/clinical features + regression target
     ├── images/
     │   └── <PATIENT_ID>/
@@ -137,7 +137,7 @@ class TabularStore:
                 f"Available columns: {list(raw.columns)}"
             )
 
-        raw = raw.drop_duplicates(subset=[patient_id_col], keep='first')
+        raw = raw.drop_duplicates(subset=[patient_id_col], keep="first")
         raw = raw.set_index(patient_id_col)
         # Separate target from features
         if target_col in raw.columns:
@@ -212,7 +212,9 @@ class TabularStore:
         from sklearn.preprocessing import PowerTransformer, RobustScaler
         import joblib
 
-        log.info("Fitting Tabular Pipeline strictly on training patients to prevent leakage...")
+        log.info(
+            "Fitting Tabular Pipeline strictly on training patients to prevent leakage..."
+        )
 
         train_mask = self._features.index.isin(train_ids)
         train_data = self._features.loc[train_mask]
@@ -221,10 +223,12 @@ class TabularStore:
             log.warning("No training data found! Skipping tabular scaling.")
             return
 
-        self.pipeline = Pipeline([
-            ("power", PowerTransformer(method='yeo-johnson', standardize=True)),
-            ("scaler", RobustScaler())
-        ])
+        self.pipeline = Pipeline(
+            [
+                ("power", PowerTransformer(method="yeo-johnson", standardize=True)),
+                ("scaler", RobustScaler()),
+            ]
+        )
         self.pipeline.fit(train_data.values)
 
         # Transform in-place
@@ -249,6 +253,7 @@ class TabularStore:
         scaled_values = self.pipeline.transform(self._features.values)
         self._features.iloc[:, :] = scaled_values
         log.info("✅ Successfully applied pre-fitted scaler to tabular data.")
+
 
 # ---------------------------------------------------------------------------
 # Slide / WSI store
@@ -279,14 +284,14 @@ class SlideStore:
     _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
     def __init__(
-            self,
-            images_dir: Path,
-            features_dir: Path,
-            use_preextracted: bool = True,
-            patch_size: int = 256,
-            max_patches: int = 16,
-            image_size: int = 224,
-            manifest_path: Path | None = None,  # NEW: For UUID mapping
+        self,
+        images_dir: Path,
+        features_dir: Path,
+        use_preextracted: bool = True,
+        patch_size: int = 256,
+        max_patches: int = 16,
+        image_size: int = 224,
+        manifest_path: Path | None = None,  # NEW: For UUID mapping
     ) -> None:
         self._images_dir = images_dir
         self._features_dir = features_dir
@@ -298,25 +303,33 @@ class SlideStore:
         # --- 1. TSV / UUID Mapping ---
         self._manifest_map: dict[str, Path] = {}
         if not use_preextracted and manifest_path and manifest_path.exists():
-            df = pd.read_csv(manifest_path, sep='\t')
+            df = pd.read_csv(manifest_path, sep="\t")
             for _, row in df.iterrows():
-                pid = row['Case ID']
+                pid = row["Case ID"]
                 # Map Patient -> data/images/<UUID_Folder>/<File.svs>
-                svs_path = self._images_dir / row['File ID'] / row['File Name']
+                svs_path = self._images_dir / row["File ID"] / row["File Name"]
                 if pid not in self._manifest_map:
                     self._manifest_map[pid] = svs_path
 
         # --- 2. Augmentation & Normalization Tools ---
         if not use_preextracted:
             import albumentations as A
-            self.augmentor = A.Compose([
-                A.HorizontalFlip(p=0.5),
-                A.VerticalFlip(p=0.5),
-                A.Affine(translate_percent={'x': (-0.1, 0.1), 'y': (-0.1, 0.1)}, p=0.5),
-            ])
+
+            self.augmentor = A.Compose(
+                [
+                    A.HorizontalFlip(p=0.5),
+                    A.VerticalFlip(p=0.5),
+                    A.Affine(
+                        translate_percent={"x": (-0.1, 0.1), "y": (-0.1, 0.1)}, p=0.5
+                    ),
+                ]
+            )
             try:
                 import torchstain
-                self.normalizer = torchstain.normalizers.MacenkoNormalizer(backend='numpy')
+
+                self.normalizer = torchstain.normalizers.MacenkoNormalizer(
+                    backend="numpy"
+                )
             except ImportError:
                 self.normalizer = None
                 log.warning("torchstain missing. Macenko skipped.")
@@ -325,7 +338,9 @@ class SlideStore:
         """Return True if any image/feature data exists for this patient."""
         if self._use_preextracted:
             return (self._features_dir / f"{patient_id}.npy").exists()
-        return patient_id in self._manifest_map and self._manifest_map[patient_id].exists()
+        return (
+            patient_id in self._manifest_map and self._manifest_map[patient_id].exists()
+        )
 
     def get_image(self, patient_id: str) -> np.ndarray | None:
         """Load and return image data for *patient_id*, or None if absent."""
@@ -339,7 +354,8 @@ class SlideStore:
 
     def _load_preextracted(self, patient_id: str) -> np.ndarray | None:
         path = self._features_dir / f"{patient_id}.npy"
-        if not path.exists(): return None
+        if not path.exists():
+            return None
         return np.load(path).astype(np.float32)
 
     def _tile_svs(self, patient_id: str) -> np.ndarray | None:
@@ -628,7 +644,10 @@ class _BatchLoader:
 # Public: build_dataloaders
 # ---------------------------------------------------------------------------
 
-def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader, _BatchLoader | None]:
+
+def build_dataloaders(
+    cfg: DotDict,
+) -> tuple[_BatchLoader, _BatchLoader, _BatchLoader | None]:
     """Construct train, validation, and test dataloaders from the merged config.
 
     Args:
@@ -693,7 +712,9 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader, _BatchL
 
     if use_tabular and use_image:
         all_ids = tabular_ids.intersection(img_ids)
-        log.info(f"Strict Multimodal mode: Found {len(all_ids)} patients with BOTH RNA and WSI.")
+        log.info(
+            f"Strict Multimodal mode: Found {len(all_ids)} patients with BOTH RNA and WSI."
+        )
     elif use_tabular:
         all_ids = tabular_ids
     elif use_image:
@@ -729,12 +750,13 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader, _BatchL
         # that survived the modality intersection (all_ids)
         valid_splits = splits_df[splits_df[id_col].isin(all_ids)]
 
-        train_ids = valid_splits[valid_splits['split'] == 'train'][id_col].tolist()
-        val_ids = valid_splits[valid_splits['split'] == 'val'][id_col].tolist()
-        test_ids = valid_splits[valid_splits['split'] == 'test'][id_col].tolist()
+        train_ids = valid_splits[valid_splits["split"] == "train"][id_col].tolist()
+        val_ids = valid_splits[valid_splits["split"] == "val"][id_col].tolist()
+        test_ids = valid_splits[valid_splits["split"] == "test"][id_col].tolist()
 
         log.info(
-            f"Split distribution for current modalities: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}")
+            f"Split distribution for current modalities: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}"
+        )
 
     else:
         # Fallback to the original random split if no file is provided
@@ -755,25 +777,43 @@ def build_dataloaders(cfg: DotDict) -> tuple[_BatchLoader, _BatchLoader, _BatchL
             if prep_path:
                 tabular_store.load_and_scale(prep_path)
             else:
-                tabular_store.fit_and_scale(train_ids, "freezed-models/runs/checkpoints/tabular_preprocessing_pipeline.pkl")
+                tabular_store.fit_and_scale(
+                    train_ids,
+                    "freezed-models/runs/checkpoints/tabular_preprocessing_pipeline.pkl",
+                )
 
     # -- Build Datasets and Loaders -----------------------------------
-    train_ds = MultimodalDataset(tabular_store, slide_store, train_ids, shuffle=True, seed=seed)
+    train_ds = MultimodalDataset(
+        tabular_store, slide_store, train_ids, shuffle=True, seed=seed
+    )
     val_ds = MultimodalDataset(tabular_store, slide_store, val_ids, shuffle=False)
 
     feature_names = tabular_store.feature_names if tabular_store else None
 
-    train_loader = _BatchLoader(train_ds, batch_size=batch_size, shuffle=True, seed=seed, feature_names=feature_names)
-    val_loader = _BatchLoader(val_ds, batch_size=batch_size, shuffle=False, feature_names=feature_names)
+    train_loader = _BatchLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        seed=seed,
+        feature_names=feature_names,
+    )
+    val_loader = _BatchLoader(
+        val_ds, batch_size=batch_size, shuffle=False, feature_names=feature_names
+    )
 
     test_loader = None
     if test_ids:
         test_ds = MultimodalDataset(tabular_store, slide_store, test_ids, shuffle=False)
-        test_loader = _BatchLoader(test_ds, batch_size=batch_size, shuffle=False, feature_names=feature_names)
+        test_loader = _BatchLoader(
+            test_ds, batch_size=batch_size, shuffle=False, feature_names=feature_names
+        )
 
     log.info(
         "Dataloaders: train=%d batches, val=%d batches, test=%d batches (batch_size=%d)",
-        len(train_loader), len(val_loader), len(test_loader) if test_loader else 0, batch_size,
+        len(train_loader),
+        len(val_loader),
+        len(test_loader) if test_loader else 0,
+        batch_size,
     )
 
     return train_loader, val_loader, test_loader
