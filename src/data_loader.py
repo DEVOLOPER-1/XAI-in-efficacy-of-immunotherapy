@@ -8,13 +8,15 @@ Expected data layout on disk (configured via cfg.dataset.*):
     │                                   + genomics/clinical features + regression target
     ├── images/
     │   └── <PATIENT_ID>/
-    │       └── slide.svs            ← whole-slide image (WSI, SVS or TIFF format)
+    │       ├── tile_000.png         ← tiled RGB patches saved by `data_builder.py`
+    │       ├── tile_001.png
+    │       └── ...
     └── features/                    ← (optional) pre-extracted patch features
         └── <PATIENT_ID>.npy         ← (N_patches, feature_dim) float32 array
 
 Modality availability per patient:
-  - tabular-only : row in CSV, no SVS / .npy       → image is None in sample
-  - image-only   : SVS present, not in CSV         → tabular is None in sample
+  - tabular-only : row in CSV, no tiles / .npy      → image is None in sample
+  - image-only   : tiles present, not in CSV       → tabular is None in sample
   - both         : normal multimodal patient
   - neither      : logged as warning, patient excluded from all splits
 
@@ -50,7 +52,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import logging
 import math
-from email.policy import default
 from pathlib import Path
 import random
 from typing import Any, Iterator
@@ -125,9 +126,9 @@ class TabularStore:
             )
 
         if file_path.suffix == ".csv":
-            raw = pd.read_csv(file_path)
+            raw = pd.read_csv(str(file_path))
         elif file_path.suffix == ".parquet":
-            raw = pd.read_parquet(file_path)
+            raw = pd.read_parquet(str(file_path))
         else:
             raise FileNotFoundError(f"Unsupported file type: {file_path.suffix}")
 
@@ -261,18 +262,20 @@ class TabularStore:
 
 
 class SlideStore:
-    """Loads pathology images (WSI) for each patient.
+    """Loads pathology tiles or pre-extracted features for each patient.
 
     Mode A — pre-extracted features (default, recommended):
         Loads a .npy array of shape (N_patches, feature_dim) saved by your
         feature extractor script (e.g. UNI, CONCH, PLIP).
         No OpenSlide dependency, very fast.
 
-    Mode B — on-the-fly SVS tiling (requires openslide-python):
-        Opens the SVS at full resolution, randomly samples cfg.dataset.max_patches
-        non-overlapping tiles of size patch_size × patch_size, resizes each to
-        image_size × image_size, and normalises to ImageNet mean/std.
-        Use this path for end-to-end fine-tuning or when feature files are absent.
+    Mode B — tiled PNG images:
+        Loads patient tile PNGs from `images/<PATIENT_ID>/`, resizes them to
+        `image_size` if needed, and normalises to ImageNet mean/std.
+
+    Legacy fallback — on-the-fly SVS tiling (requires openslide-python):
+        If a patient still has an SVS/TIFF rather than PNG tiles, the store can
+        open it directly and sample tiles for compatibility.
 
     Install:
         Mode A: no extra deps.
@@ -303,13 +306,15 @@ class SlideStore:
         # --- 1. TSV / UUID Mapping ---
         self._manifest_map: dict[str, Path] = {}
         if not use_preextracted and manifest_path and manifest_path.exists():
-            df = pd.read_csv(manifest_path, sep="\t")
+            df = pd.read_csv(str(manifest_path), sep="\t")
             for _, row in df.iterrows():
                 pid = row["Case ID"]
                 # Map Patient -> data/images/<UUID_Folder>/<File.svs>
                 svs_path = self._images_dir / row["File ID"] / row["File Name"]
                 if pid not in self._manifest_map:
                     self._manifest_map[pid] = svs_path
+
+        self._patient_ids_cache = self._discover_patient_ids()
 
         # --- 2. Augmentation & Normalization Tools ---
         if not use_preextracted:
@@ -336,16 +341,33 @@ class SlideStore:
 
     def patient_has_data(self, patient_id: str) -> bool:
         """Return True if any image/feature data exists for this patient."""
+        return patient_id in self._patient_ids_cache
+
+    @property
+    def patient_ids(self) -> set[str]:
+        return set(self._patient_ids_cache)
+
+    def _discover_patient_ids(self) -> set[str]:
         if self._use_preextracted:
-            return (self._features_dir / f"{patient_id}.npy").exists()
-        return (
-            patient_id in self._manifest_map and self._manifest_map[patient_id].exists()
-        )
+            return {p.stem for p in self._features_dir.glob("*.npy")}
+
+        patient_ids: set[str] = set()
+
+        if self._images_dir.exists():
+            for patient_dir in self._images_dir.iterdir():
+                if patient_dir.is_dir() and any(patient_dir.glob("*.png")):
+                    patient_ids.add(patient_dir.name)
+
+        patient_ids.update(pid for pid, path in self._manifest_map.items() if path.exists())
+        return patient_ids
 
     def get_image(self, patient_id: str) -> np.ndarray | None:
         """Load and return image data for *patient_id*, or None if absent."""
         if self._use_preextracted:
             return self._load_preextracted(patient_id)
+        image = self._load_tile_directory(patient_id)
+        if image is not None:
+            return image
         return self._tile_svs(patient_id)
 
     # ------------------------------------------------------------------
@@ -357,6 +379,38 @@ class SlideStore:
         if not path.exists():
             return None
         return np.load(path).astype(np.float32)
+
+    def _load_tile_directory(self, patient_id: str) -> np.ndarray | None:
+        """Load PNG tiles saved under `images/<PATIENT_ID>/`."""
+        import cv2
+
+        tile_dir = self._images_dir / patient_id
+        if not tile_dir.exists():
+            return None
+
+        tile_paths = sorted(
+            [
+                *tile_dir.glob("*.png"),
+                *tile_dir.glob("*.jpg"),
+                *tile_dir.glob("*.jpeg"),
+            ]
+        )
+        if not tile_paths:
+            return None
+
+        tiles: list[np.ndarray] = []
+        for path in tile_paths[: self._max_patches]:
+            tile = cv2.imread(str(path), cv2.IMREAD_COLOR)
+            if tile is None:
+                continue
+            tile = cv2.cvtColor(tile, cv2.COLOR_BGR2RGB)
+            tile = tile.astype(np.float32) / 255.0
+            tile = _resize_hwc(tile, self._image_size)
+            tile = (tile - self._MEAN) / self._STD
+            tile = tile.transpose(2, 0, 1)
+            tiles.append(tile)
+
+        return np.stack(tiles, axis=0) if tiles else None
 
     def _tile_svs(self, patient_id: str) -> np.ndarray | None:
         """Sample random tiles from the patient's SVS file.
@@ -702,13 +756,13 @@ def build_dataloaders(
 
     img_ids = set()
     if slide_store:
-        scan_dir = features_dir if preextracted else images_dir
-        if scan_dir.exists():
-            img_ids = (
-                {p.stem for p in scan_dir.glob("*.npy")}
-                if preextracted
-                else set(slide_store._manifest_map.keys())
-            )
+        img_ids = set(slide_store.patient_ids)
+        if not preextracted and not img_ids and images_dir.exists():
+            img_ids = {
+                p.name
+                for p in images_dir.iterdir()
+                if p.is_dir() and any(p.glob("*.png"))
+            }
 
     if use_tabular and use_image:
         all_ids = tabular_ids.intersection(img_ids)
@@ -730,7 +784,7 @@ def build_dataloaders(
 
     if split_file and Path(split_file).exists():
         log.info(f"Loading deterministic patient splits from {split_file}")
-        splits_df = pd.read_csv(split_file)
+        splits_df = pd.read_csv(str(split_file))
 
         # --- NEW: Missing Data Warning Logic ---
         master_ids = set(splits_df[id_col])
@@ -770,17 +824,17 @@ def build_dataloaders(
 
     # -- Fit Tabular Scaler -----------------------------------
     if tabular_store:
-        save_dir = Path(cfg.training.get("save_dir", "freezed-models/runs/checkpoints"))
+        training_cfg = cfg.get("training") or DotDict({})
         prep_path = ds_cfg.get("preprocessor_save_path", None)
+        default_prep_path = Path(
+            training_cfg.get("save_dir", "freezed-models/runs/checkpoints")
+        ) / "tabular_preprocessing_pipeline.pkl"
 
         if ds_cfg.get("run_preprocessor_pipeline", default=False):
             if prep_path:
-                tabular_store.load_and_scale(prep_path)
+                tabular_store.load_and_scale(Path(prep_path))
             else:
-                tabular_store.fit_and_scale(
-                    train_ids,
-                    "freezed-models/runs/checkpoints/tabular_preprocessing_pipeline.pkl",
-                )
+                tabular_store.fit_and_scale(train_ids, default_prep_path)
 
     # -- Build Datasets and Loaders -----------------------------------
     train_ds = MultimodalDataset(
