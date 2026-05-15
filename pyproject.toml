@@ -27,6 +27,8 @@ dependencies = [
     "torch>=2.3.0",
     "torchvision>=0.18.0",
     "ruff>=0.15.4",
+    "timm>=1.0.27",
+    "transformers>=5.8.1",
 ]
 
 # uv sync --extra dl --extra dev --extra scrapping
