@@ -20,7 +20,6 @@ import logging
 from pathlib import Path
 import pickle
 from typing import Any, Sequence
-import joblib
 
 import numpy as np
 
@@ -81,7 +80,7 @@ def r2_score(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
     ss_tot = np.sum((yt - np.mean(yt)) ** 2)
     if ss_tot == 0.0:
         return float("nan")  # target has zero variance — metric undefined
-    return float(1.0 - ss_res / ss_tot)
+    return float(1.0 - float(ss_res) / float(ss_tot))
 
 
 def pearson_r(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
@@ -249,7 +248,10 @@ def auprc(
 
     return float(np.trapezoid(precision, recall))
 
-def huber_loss(y_true: Sequence[float], y_pred: Sequence[float], delta: float = 1.0) -> float:
+
+def huber_loss(
+    y_true: Sequence[float], y_pred: Sequence[float], delta: float = 1.0
+) -> float:
     """Huber Loss — matches PyTorch nn.HuberLoss(delta=1.0).
 
     Robust regression metric that acts like MSE for small errors
@@ -263,8 +265,9 @@ def huber_loss(y_true: Sequence[float], y_pred: Sequence[float], delta: float = 
     quadratic = np.minimum(abs_err, delta)
     linear = abs_err - quadratic
 
-    loss = 0.5 * (quadratic ** 2) + delta * linear
+    loss = 0.5 * (quadratic**2) + delta * linear
     return float(np.mean(loss))
+
 
 # ---------------------------------------------------------------------------
 # Omnibus metric dict — used by train.py and W&B logging
@@ -427,25 +430,21 @@ def save_checkpoint(model: Any, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if hasattr(model, "_est") and not hasattr(model._est, "state_dict"):
-        joblib.dump(model._est, path)
-        log.info("Scikit-Learn (Joblib) checkpoint saved ➔ %s", path)
-        return
-
-    # 2. Standard PyTorch Save
     try:
-        import torch
+        from importlib import import_module
+
+        torch = import_module("torch")
+
         if hasattr(model, "state_dict"):
             torch.save(model.state_dict(), path)
-            log.info("Torch checkpoint saved ➔ %s", path)
+            log.info("Torch checkpoint saved → %s", path)
             return
     except ImportError:
-        pass
+        torch = None  # type: ignore[assignment]
 
-    # 3. Ultimate Fallback (Standard Pickle)
     with open(path, "wb") as fh:
         pickle.dump(model, fh)
-    log.info("Pickle checkpoint saved ➔ %s", path)
+    log.info("Pickle checkpoint saved → %s", path)
 
 
 def load_checkpoint(model: Any, path: str | Path) -> Any:
@@ -459,28 +458,76 @@ def load_checkpoint(model: Any, path: str | Path) -> Any:
         The model with loaded weights (always the same object for torch).
     """
     path = Path(path)
+    if not path.exists():
+        log.warning("Checkpoint not found: %s — using uninitialised model.", path)
+        return model
 
-    # 1. Intercept Scikit-Learn wrappers
-    if hasattr(model, "_est") and not hasattr(model._est, "state_dict"):
-        model._est = joblib.load(path)
-        log.info("Scikit-Learn (Joblib) checkpoint loaded ➔ %s", path)
-        return
-
-    # 2. Standard PyTorch Load
     try:
-        import torch
-        if hasattr(model, "load_state_dict"):
-            state_dict = torch.load(path, weights_only=True)
-            model.load_state_dict(state_dict)
-            log.info("Torch checkpoint loaded ➔ %s", path)
-            return
-    except ImportError:
-        pass
+        from importlib import import_module
 
-    # 3. Fallback
+        torch = import_module("torch")
+
+        if hasattr(model, "load_state_dict"):
+            state = torch.load(path, map_location="cpu", weights_only=True)
+            model.load_state_dict(state)
+            log.info("Torch checkpoint loaded from %s", path)
+            return model
+    except ImportError:
+        torch = None  # type: ignore[assignment]
+
     with open(path, "rb") as fh:
-        model = pickle.load(fh)
-    log.info("Pickle checkpoint loaded ➔ %s", path)
+        loaded = pickle.load(fh)
+    log.info("Pickle checkpoint loaded from %s", path)
+    return loaded
+
+
+# ---------------------------------------------------------------------------
+# Generic helpers used by training / inference / explainability
+# ---------------------------------------------------------------------------
+
+
+def as_numpy(value: Any | None) -> np.ndarray | None:
+    """Convert common tensor-like inputs to a NumPy array.
+
+    Supports NumPy arrays, pandas objects, and torch tensors without importing
+    torch at module import time.
+    """
+    if value is None:
+        return None
+    if isinstance(value, np.ndarray):
+        return value
+    if hasattr(value, "detach"):
+        return value.detach().cpu().numpy()
+    if hasattr(value, "cpu") and hasattr(value, "numpy"):
+        try:
+            return value.cpu().numpy()
+        except Exception:  # pragma: no cover - best-effort conversion
+            pass
+    return np.asarray(value)
+
+
+def save_json(payload: Any, path: str | Path) -> Path:
+    """Write *payload* to *path* as pretty-printed JSON and return the path."""
+    import json
+
+    def _default(value: Any) -> Any:
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.integer, np.floating)):
+            return value.item()
+        raise TypeError(
+            f"Object of type {type(value).__name__} is not JSON serialisable"
+        )
+
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, default=_default)
+        fh.write("\n")
+    return output
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
