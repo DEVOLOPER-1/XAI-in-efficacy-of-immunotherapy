@@ -10,7 +10,7 @@ dataset:
   target_col: "TMB_NONSYNONYMOUS"
   # TMB is extremely heavy-tailed (median 3.17, max 433) → log1p stabilises gradients.
   # Without this the loss is dominated by outliers and R² stays negative.
-  log1p_target: true        # Apply log1p(TMB) before computing loss
+  log1p_target: false        # Apply log1p(TMB) before computing loss
   # Memory budget: batch_size=16 × max_patches=16 = 256 tiles per step
   max_patches: 16           # Use all available tiles (most patients have exactly 16)
   image_size: 224           # Standard 224×224 patch size (20× magnification)
@@ -37,7 +37,7 @@ model:
   epochs: 100
   # Target standardisation stats (log1p scale, computed from COAD train set)
   # log1p(TMB): mean≈1.79, std≈1.09 — standardise so predictions start near 0
-  target_scale: true
+  target_scale: false
   target_mean: 1.79
   target_std: 1.09
 
@@ -57,7 +57,7 @@ training:
 
 # ── W&B Configuration ──────────────────────────────────────────────────────
 wandb:
-  run_name: "cellmorphnet_window_attn_100ep_annealing_log1p_target"
+  run_name: "cellmorphnet_window_attn_100ep_annealing_no_log1p_target"
   tags:
     - cellmorphnet
     - window_attention
