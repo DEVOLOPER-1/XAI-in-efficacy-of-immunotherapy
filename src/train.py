@@ -470,7 +470,12 @@ def _neural_validate(
 
             # ── Forward pass ──────────────────────────────────────────────
             try:
-                preds = model(image, tabular).view(-1).cpu().numpy()
+                raw_preds = model(image, tabular).view(-1)
+
+                # Unscale the log-predictions back to real-world TMB space!
+                preds = _transform_regression_values(raw_preds, cfg, inverse=True)
+                preds = preds.cpu().numpy()  # Perfectly safe here in validation!
+
             except Exception:
                 continue  # Skip problematic batches
 
