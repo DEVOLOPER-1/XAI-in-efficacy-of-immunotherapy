@@ -45,7 +45,7 @@ dataset:
   seed: 42
 
   # Batching — smaller batch because unfrozen backbone stores activation graphs
-  batch_size: 4
+  batch_size: 32
 
   # No target transformation: train on raw TMB ∈ [0, 433]
   log1p_target: false
@@ -65,10 +65,10 @@ model:
 
   # Gradient checkpointing: recomputes activations during backward instead of
   # storing them. Reduces peak VRAM ~3× at ~25% extra compute cost.
-  # Required to fit unfrozen InceptionV3 within 11.6 GiB.
+  # Required to fit unfrozen InceptionV3 within GiB.
   gradient_checkpointing: true
 
-  tile_chunk_size: 8                     # Tiles per CNN forward pass (smaller = less peak VRAM)
+  tile_chunk_size: 32                     # Tiles per CNN forward pass (smaller = less peak VRAM)
 
   # No target scaling — raw TMB scale throughout
   target_scale: false
@@ -105,7 +105,7 @@ training:
 wandb:
   entity: "mohamed-mourad-zewail-city"
   project_name: "TMB-prediction"
-  run_name: "shimada2021_replication_e2e_finetune"
+  run_name: "shimada2021_replication_e2e_finetune_batch32"
   tags:
     - images_only
     - inception_cnn
