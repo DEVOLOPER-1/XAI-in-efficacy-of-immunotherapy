@@ -212,9 +212,9 @@ class TabularStore:
 
     def fit_and_scale(self, train_ids: list[str], save_path: Path) -> None:
         """Fits sklearn preprocessor on training data and transforms all data."""
+        import joblib
         from sklearn.pipeline import Pipeline
         from sklearn.preprocessing import PowerTransformer, RobustScaler
-        import joblib
 
         log.info(
             "Fitting Tabular Pipeline strictly on training patients to prevent leakage..."
@@ -356,6 +356,16 @@ class SlideStore:
             arr.shape,
         )
         return arr.reshape(-1).astype(np.float32)
+
+    def _is_tissue_tile(
+        self, tile_hwc: np.ndarray, sat_thresh: float = 0.1, val_thresh: float = 0.2
+    ) -> bool:
+        """Simple tissue detection via HSV thresholding."""
+        import cv2
+
+        hsv = cv2.cvtColor((tile_hwc * 255).astype(np.uint8), cv2.COLOR_RGB2HSV)
+        s, v = hsv[:, :, 1], hsv[:, :, 2]
+        return (s.mean() > sat_thresh * 255) and (v.mean() > val_thresh * 255)
 
     def _load_tile_directory(self, patient_id: str) -> np.ndarray | None:
         """Load PNG tiles saved under `images/<PATIENT_ID>/`."""
@@ -686,8 +696,10 @@ def build_dataloaders(
         )
 
     # -- Intersection of all known patient IDs (Strict Multimodal) --
-    tabular_ids = set(tabular_store.patient_ids) if tabular_store else (
-        set(target_store.patient_ids) if target_store else set()
+    tabular_ids = (
+        set(tabular_store.patient_ids)
+        if tabular_store
+        else (set(target_store.patient_ids) if target_store else set())
     )
 
     img_ids = set()
@@ -757,9 +769,10 @@ def build_dataloaders(
     if tabular_store:
         training_cfg = cfg.get("training") or DotDict({})
         prep_path = ds_cfg.get("preprocessor_save_path", None)
-        default_prep_path = Path(
-            training_cfg.get("save_dir", "freezed-models/runs/checkpoints")
-        ) / "tabular_preprocessing_pipeline.pkl"
+        default_prep_path = (
+            Path(training_cfg.get("save_dir", "freezed-models/runs/checkpoints"))
+            / "tabular_preprocessing_pipeline.pkl"
+        )
 
         if ds_cfg.get("run_preprocessor_pipeline", default=False):
             if prep_path:
@@ -769,11 +782,18 @@ def build_dataloaders(
 
     # -- Build Datasets and Loaders -----------------------------------
     train_ds = MultimodalDataset(
-        tabular_store, slide_store, train_ids, shuffle=True, seed=seed,
+        tabular_store,
+        slide_store,
+        train_ids,
+        shuffle=True,
+        seed=seed,
         target_store=target_store,
     )
     val_ds = MultimodalDataset(
-        tabular_store, slide_store, val_ids, shuffle=False,
+        tabular_store,
+        slide_store,
+        val_ids,
+        shuffle=False,
         target_store=target_store,
     )
 
@@ -793,7 +813,10 @@ def build_dataloaders(
     test_loader = None
     if test_ids:
         test_ds = MultimodalDataset(
-            tabular_store, slide_store, test_ids, shuffle=False,
+            tabular_store,
+            slide_store,
+            test_ids,
+            shuffle=False,
             target_store=target_store,
         )
         test_loader = _BatchLoader(

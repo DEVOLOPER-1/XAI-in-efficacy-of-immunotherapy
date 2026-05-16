@@ -1,0 +1,115 @@
+# configs/experiments/shimada_inception_wsi.yaml
+# Replication of Shimada et al. (2021) — Journal of Gastroenterology
+# "Histopathological characteristics and artificial intelligence for
+#  predicting tumor mutational burden-high colorectal cancer"
+#
+# Paper methodology:
+#   - InceptionV3 end-to-end fine-tuned (NOT frozen backbone)
+#   - 360×360 px tiles at 20× magnification (we use 299×299, InceptionV3 native)
+#   - Colorectal cancer (TCGA COAD) ← our cohort matches
+#   - LR ~1e-4 with AdamW, standard for InceptionV3 transfer learning
+#   - Differential LR: backbone 10× lower than head (standard fine-tuning practice)
+#   - Gradient checkpointing to fit unfrozen InceptionV3 in 11.6GB VRAM
+
+experiment_name: shimada2021_inception_wsi_replication
+
+# ── Modality configuration ─────────────────────────────────────────────────
+modalities:
+  tabular: false
+  image:   true
+  modality: image
+
+# ── Dataset configuration ──────────────────────────────────────────────────
+dataset:
+  # Paths (relative to data_root)
+  data_root: "data"
+  tabular_file: "clinical.csv"
+  images_dir: "images"
+  features_dir: "features"
+
+  # Target & identifiers
+  target_col: "TMB_NONSYNONYMOUS"
+  patient_id_col: "PATIENT_ID"
+
+  # Image/patch settings
+  # Paper uses 360×360 at 20×; InceptionV3 native input is 299×299.
+  # We resize tiles to 299 (InceptionV3 native) which is standard for this backbone.
+  use_preextracted: false
+  patch_size: 512                        # Original tile size on disk
+  max_patches: 32                        # 32 tiles/patient — more tissue signal than 8–16
+  image_size: 299                        # InceptionV3 native input resolution
+
+  # Splitting
+  patients_split_file: "data/master_patient_splits.csv"
+  val_ratio: 0.15
+  seed: 42
+
+  # Batching — smaller batch because unfrozen backbone stores activation graphs
+  batch_size: 4
+
+  # No target transformation: train on raw TMB ∈ [0, 433]
+  log1p_target: false
+
+# ── Model configuration ────────────────────────────────────────────────────
+model:
+  category: "image_only"
+  type: "inception_shimada"
+
+  # Task: regression for continuous TMB (keeps XAI analysis meaningful)
+  task_mode: "regression"
+  dropout: 0.5                           # Standard dropout for InceptionV3 head
+
+  # Backbone: END-TO-END FINE-TUNED — matches Shimada 2021
+  # The paper fine-tuned the full InceptionV3, not just the head.
+  freeze_backbone: false
+
+  # Gradient checkpointing: recomputes activations during backward instead of
+  # storing them. Reduces peak VRAM ~3× at ~25% extra compute cost.
+  # Required to fit unfrozen InceptionV3 within 11.6 GiB.
+  gradient_checkpointing: true
+
+  tile_chunk_size: 8                     # Tiles per CNN forward pass (smaller = less peak VRAM)
+
+  # No target scaling — raw TMB scale throughout
+  target_scale: false
+
+  # Fallback hyperparameters (training section takes precedence)
+  learning_rate: 1e-4
+  epochs: 100
+
+# ── Training hyperparameters ───────────────────────────────────────────────
+training:
+  epochs: 100                            # Longer training: end-to-end fine-tuning converges slowly
+  val_every: 5
+
+  # Optimisation — Shimada 2021: Adam/AdamW, lr~1e-4
+  lr: 1e-4                               # Head learning rate (full LR)
+  backbone_lr_factor: 0.1               # Backbone LR = 1e-4 × 0.1 = 1e-5
+                                         # Standard: pretrained layers need gentler updates
+  weight_decay: 1e-4
+  grad_clip: 1.0
+
+  # LR scheduler: reduce LR when val_huber plateaus
+  scheduler: ReduceLROnPlateau
+  scheduler_patience: 10                 # More patience for end-to-end fine-tuning
+  scheduler_factor: 0.5
+
+  # Checkpointing
+  save_dir: "logs/runs/checkpoints"
+  upload_pickled_model: false
+
+  # Risk stratification
+  risk_threshold: 27.0                   # TMB-H cutoff for AUROC/AUPRC metrics
+
+# ── Weights & Biases configuration ─────────────────────────────────────────
+wandb:
+  entity: "mohamed-mourad-zewail-city"
+  project_name: "TMB-prediction"
+  run_name: "shimada2021_replication_e2e_finetune"
+  tags:
+    - images_only
+    - inception_cnn
+    - shimada2021
+    - end_to_end_finetune
+    - gradient_checkpointing
+    - tcga_coad

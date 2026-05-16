@@ -1,5 +1,5 @@
 """
-src/models/shimada_inception_swi.py — Shimada et al. (2021) InceptionV3 WSI predictor.
+src/models/shimada_inception_wsi.py — Shimada et al. (2021) InceptionV3 WSI predictor.
 
 Implements the two-stage approach:
 1. Tile-level feature extraction via pretrained InceptionV3
@@ -20,6 +20,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 import torchvision.models as models
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 from src.config import DotDict
 from src.models.image import _TorchBase
 
@@ -51,11 +52,13 @@ class ShimadaInceptionWSI(_TorchBase):
                 mode: str = "regression",
                 freeze: bool = True,
                 tile_chunk_size: int = 32,
+                use_grad_ckpt: bool = False,
             ):
                 super().__init__()
                 self.freeze_backbone = freeze
                 self.mode = mode
                 self.tile_chunk_size = max(1, int(tile_chunk_size))
+                self.use_grad_ckpt = use_grad_ckpt
 
                 # ── InceptionV3 backbone ─────────────────────────────────────
                 # torchvision requires aux_logits=True when loading pretrained weights
@@ -104,7 +107,12 @@ class ShimadaInceptionWSI(_TorchBase):
                 return self
 
             def _encode_tiles(self, tiles: torch.Tensor) -> torch.Tensor:
-                """Encode tiles in smaller chunks to avoid GPU OOM on large bags."""
+                """Encode tiles in smaller chunks to avoid GPU OOM on large bags.
+                
+                When the backbone is unfrozen, uses gradient checkpointing to
+                recompute activations during backward instead of storing them,
+                reducing peak memory by ~3x at ~25% extra compute cost.
+                """
                 if tiles.numel() == 0:
                     return tiles.new_zeros((0, 2048))
 
@@ -114,6 +122,10 @@ class ShimadaInceptionWSI(_TorchBase):
                     if self.freeze_backbone:
                         with torch.no_grad():
                             feats = self.cnn(chunk)
+                    elif self.use_grad_ckpt:
+                        # Gradient checkpointing: recompute forward on backward pass
+                        # use_reentrant=False is the modern, recommended API
+                        feats = grad_checkpoint(self.cnn, chunk, use_reentrant=False)
                     else:
                         feats = self.cnn(chunk)
                     features.append(feats)
@@ -189,8 +201,8 @@ class ShimadaInceptionWSI(_TorchBase):
                 
                 # Optional: clamp outputs for numerical stability
                 if self.mode == "regression":
-                    # Clamp to reasonable TMB range [0, 500] to prevent explosion
-                    logits = logits.clamp(min=0.0, max=500.0)
+                    # Clamp to realistic TMB range [0, 250] (99th percentile) to prevent explosion
+                    logits = logits.clamp(min=0.0, max=250.0)
                 # For classification, sigmoid already bounds to [0, 1]
                 
                 return logits
@@ -200,10 +212,33 @@ class ShimadaInceptionWSI(_TorchBase):
         dropout = float(model_cfg.get("dropout", 0.5))
         freeze = bool(model_cfg.get("freeze_backbone", True))
         tile_chunk_size = int(model_cfg.get("tile_chunk_size", 32))
+        use_grad_ckpt = bool(model_cfg.get("gradient_checkpointing", False))
 
         return InnerInception(
             dropout_rate=dropout,
             mode=mode,
             freeze=freeze,
             tile_chunk_size=tile_chunk_size,
+            use_grad_ckpt=use_grad_ckpt,
         )
+
+    def get_param_groups(self, head_lr: float, backbone_lr_factor: float = 0.1) -> list[dict]:
+        """Return separate param groups for differential learning rates.
+
+        Backbone (pretrained ImageNet weights) should use a much smaller LR
+        than the randomly-initialised task head. Standard fine-tuning practice:
+            backbone LR = head_lr × backbone_lr_factor  (typically 0.1×)
+            head     LR = head_lr
+
+        Args:
+            head_lr: Learning rate for the task head.
+            backbone_lr_factor: Multiplier applied to head_lr for backbone.
+
+        Returns:
+            List of param group dicts ready for torch.optim.*
+        """
+        backbone_lr = head_lr * backbone_lr_factor
+        return [
+            {"params": list(self._est.cnn.parameters()),  "lr": backbone_lr, "name": "backbone"},
+            {"params": list(self._est.head.parameters()), "lr": head_lr,     "name": "head"},
+        ]

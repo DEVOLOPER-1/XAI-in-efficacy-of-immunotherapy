@@ -6,6 +6,7 @@ used by `main.py` and older notebooks.
 """
 
 from __future__ import annotations
+
 from src.explainability import (
     ExplainabilityArtifact,
     ExplainabilityReport,
@@ -17,7 +18,7 @@ from src.explainability import (
 __all__ = [
     "ExplainabilityArtifact",
     "ExplainabilityReport",
-    "run_explainability",
     "evaluate",
     "predict",
+    "run_explainability",
 ]

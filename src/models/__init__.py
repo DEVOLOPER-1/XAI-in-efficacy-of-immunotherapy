@@ -194,7 +194,7 @@ def _load_wsi_rna_mcb(cfg: DotDict) -> Any:
 def _load_inception_shimada(cfg: DotDict) -> Any:
     """Shimada et al. (2021) InceptionV3 tile aggregator for TMB prediction."""
     try:
-        from src.models.shimada_inception_swi import ShimadaInceptionWSI  # type: ignore[import]
+        from src.models.shimada_inception_wsi import ShimadaInceptionWSI  # type: ignore[import]
         return ShimadaInceptionWSI(cfg)
     except ImportError as exc:
         raise ImportError(
