@@ -21,8 +21,8 @@ instances when both modalities are available.
 from __future__ import annotations
 
 import csv
-import logging
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 from typing import Any, Iterable
 

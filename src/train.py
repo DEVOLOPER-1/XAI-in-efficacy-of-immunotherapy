@@ -13,13 +13,17 @@ Design principles:
 - Numerically stable: target scaling, gradient clipping, NaN guards
 - Reproducible: seeds, deterministic splits, config-driven hyperparameters
 """
+
 from __future__ import annotations
+
 from datetime import datetime
 import logging
 from pathlib import Path
 from typing import Any
+
 import numpy as np
 import torch
+
 from src.config import DotDict
 from src.models import get_model
 from src.utils import compute_all_metrics, save_checkpoint
@@ -40,15 +44,19 @@ def _init_wandb(cfg: DotDict) -> Any:
             "Install with: uv pip install wandb"
         )
         return None
-    
+
     wandb_cfg = cfg.get("wandb") or DotDict({})
     model_cfg = cfg.get("model") or DotDict({})
-    project_name = wandb_cfg.get("project") or wandb_cfg.get("project_name", "TMB-prediction")
+    project_name = wandb_cfg.get("project") or wandb_cfg.get(
+        "project_name", "TMB-prediction"
+    )
 
     run = wandb.init(
         project=project_name,
         entity=wandb_cfg.get("entity", "mohamed-mourad-zewail-city"),
-        name=wandb_cfg.get("run_name", f"{datetime.now()}-{model_cfg.get('type', 'model')}"),
+        name=wandb_cfg.get(
+            "run_name", f"{datetime.now()}-{model_cfg.get('type', 'model')}"
+        ),
         tags=wandb_cfg.get("tags", []) + ["success"],
         config=cfg.to_dict(),  # full merged config as hyperparameters — reproducible
     )
@@ -92,6 +100,7 @@ def train(cfg: DotDict) -> dict[str, float]:
 
     # ── 3. Data ───────────────────────────────────────────────────────────────
     from src.data_loader import build_dataloaders
+
     train_loader, val_loader, _ = build_dataloaders(cfg)
     log.info(
         "Data ready — train: %d batches | val: %d batches",
@@ -138,7 +147,7 @@ def _transform_regression_values(
     target_scale = bool(model_cfg.get("target_scale", False))
     mean = float(model_cfg.get("target_mean", 0.0))
     std = float(model_cfg.get("target_std", 1.0))
-    
+
     if inverse:
         if target_scale:
             if std < 1e-6:
@@ -195,19 +204,19 @@ def _train_neural(
     # ── Hyperparameters with safe type casting ─────────────────────────────
     num_epochs = int(training_cfg.get("epochs", 100))
     val_every = int(training_cfg.get("val_every", 5))
-    
+
     # Learning rate: prefer training.lr, fallback to model.learning_rate, default 1e-4
     lr_raw = training_cfg.get("lr") or model_cfg_inner.get("learning_rate", 1e-4)
     lr = float(lr_raw) if lr_raw is not None else 1e-4
-    
+
     weight_decay_raw = training_cfg.get("weight_decay", 1e-4)
     weight_decay = float(weight_decay_raw) if weight_decay_raw is not None else 1e-4
-    
+
     grad_clip_raw = training_cfg.get("grad_clip", None)
     grad_clip = float(grad_clip_raw) if grad_clip_raw is not None else None
-    
+
     log1p_target = bool(ds_cfg.get("log1p_target", False))
-    
+
     save_dir = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
     experiment_id = cfg.get("experiment_name") or "experiment"
     wandb_cfg = cfg.get("wandb") or DotDict({})
@@ -226,19 +235,66 @@ def _train_neural(
         )
 
     # ── Optimiser & loss ───────────────────────────────────────────────────
+    # Differential LR: backbone gets lr × backbone_lr_factor (much smaller, to
+    # preserve ImageNet weights), head gets the full lr (random init needs more signal).
+    # Falls back to single LR for models that don't expose get_param_groups().
+    backbone_lr_factor_raw = training_cfg.get("backbone_lr_factor", None)
+    backbone_lr_factor = float(backbone_lr_factor_raw) if backbone_lr_factor_raw is not None else None
+
+    if backbone_lr_factor is not None and hasattr(model, "get_param_groups"):
+        param_groups = model.get_param_groups(head_lr=lr, backbone_lr_factor=backbone_lr_factor)
+        log.info(
+            "Differential LR — backbone: %.2e | head: %.2e",
+            lr * backbone_lr_factor,
+            lr,
+        )
+    else:
+        param_groups = filter(lambda p: p.requires_grad, model._est.parameters())
+
     optimiser = torch.optim.AdamW(
-        filter(lambda p: p.requires_grad, model._est.parameters()),
+        param_groups,
         lr=lr,
         weight_decay=weight_decay,
     )
-    criterion = nn.HuberLoss(delta=1.0)  # Robust to outliers vs MSE
+    # delta=1.0 matches utils.py huber_loss(delta=1.0) so train_loss and val_huber
+    # are directly comparable in the logs and W&B charts.
+    criterion = nn.HuberLoss(delta=1.0)
+
+    # ── LR Scheduler ──────────────────────────────────────────────────
+    sched_name = training_cfg.get("scheduler", None)
+    scheduler = None
+    if sched_name == "ReduceLROnPlateau":
+        sched_patience = int(training_cfg.get("scheduler_patience", 5))
+        sched_factor = float(training_cfg.get("scheduler_factor", 0.5))
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimiser,
+            mode="min",
+            patience=sched_patience,
+            factor=sched_factor,
+            min_lr=1e-6,
+        )
+        log.info(
+            "LR scheduler: ReduceLROnPlateau (patience=%d, factor=%.2f)",
+            sched_patience, sched_factor,
+        )
+
+    # ── AMP (Automatic Mixed Precision) ────────────────────────────────────
+    # float16 activations halve the per-tile memory cost of InceptionV3 forward
+    # passes; GradScaler compensates for reduced float16 dynamic range.
+    use_amp = torch.cuda.is_available()
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    if use_amp:
+        log.info("AMP enabled — using float16 activations to reduce GPU memory.")
 
     best_huber: float = float("inf")
     best_metrics: dict[str, float] = {}
 
     log.info(
         "Neural training — epochs: %d | val_every: %d | lr: %g | grad_clip: %s",
-        num_epochs, val_every, lr, grad_clip,
+        num_epochs,
+        val_every,
+        lr,
+        grad_clip,
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -278,13 +334,14 @@ def _train_neural(
 
             optimiser.zero_grad(set_to_none=True)
 
-            # ── Forward pass ──────────────────────────────────────────────
+            # ── Forward pass (inside AMP autocast) ────────────────────────
             try:
-                preds = model(image, tabular)
+                with torch.amp.autocast("cuda", enabled=use_amp):
+                    preds = model(image, tabular)
                 if preds is None:
                     log.warning("Model returned None — skipping batch.")
                     continue
-                preds = preds.view(-1)  # Always 1D (B,), safe for batch_size=1
+                preds = preds.float().view(-1)  # cast back to float32 before loss
             except Exception as e:
                 log.warning("Forward pass failed: %s — skipping batch.", e)
                 continue
@@ -298,7 +355,7 @@ def _train_neural(
             transformed_target = _transform_regression_values(target, cfg)
             transformed_preds = _transform_regression_values(preds, cfg)
 
-            # ── Loss on valid, scaled targets ─────────────────────────────
+            # ── Loss on valid, scaled targets (float32) ─────────────────────
             loss = criterion(transformed_preds[valid], transformed_target[valid])
 
             # ── Guard against NaN/Inf loss ────────────────────────────────
@@ -306,17 +363,19 @@ def _train_neural(
                 log.warning("Epoch %d: non-finite loss — skipping batch.", epoch)
                 continue
 
-            # ── Backward + optimisation ───────────────────────────────────
-            loss.backward()
+            # ── Backward + optimisation (AMP-aware) ───────────────────────
+            scaler.scale(loss).backward()
 
-            # Gradient clipping (prevents explosion in deep nets)
+            # Gradient clipping (unscale first so clip threshold is in true scale)
             if grad_clip is not None:
+                scaler.unscale_(optimiser)
                 torch.nn.utils.clip_grad_norm_(
                     filter(lambda p: p.requires_grad, model._est.parameters()),
                     grad_clip,
                 )
 
-            optimiser.step()
+            scaler.step(optimiser)
+            scaler.update()
             epoch_losses.append(loss.item())
 
         # ── Epoch summary ─────────────────────────────────────────────────
@@ -327,13 +386,23 @@ def _train_neural(
             metrics = _neural_validate(model, val_loader, cfg, threshold=threshold)
 
             log.info(
-                "Epoch %d/%d — train_loss: %.4f | val_huber: %.4f | R²: %.4f",
-                epoch, num_epochs, mean_loss, metrics["huber"], metrics["r2"],
+                "Epoch %d/%d — train_loss: %.4f | val_huber: %.4f | R²: %.4f | lr: %.2e",
+                epoch,
+                num_epochs,
+                mean_loss,
+                metrics["huber"],
+                metrics["r2"],
+                optimiser.param_groups[0]["lr"],
             )
+
+            # ── LR scheduler step (on val_huber) ──────────────────────────
+            if scheduler is not None:
+                scheduler.step(metrics["huber"])
 
             # ── W&B logging ───────────────────────────────────────────────
             if run is not None:
                 import wandb
+
                 wandb.log(
                     {
                         "epoch": epoch,
@@ -353,6 +422,7 @@ def _train_neural(
     # ── Optional model artifact upload ───────────────────────────────────
     if training_cfg.get("upload_pickled_model", False) and run is not None:
         import wandb
+
         artifact = wandb.Artifact(name="run_weights", type="model")
         artifact.add_file(str(save_path))
         run.log_artifact(artifact)
@@ -409,7 +479,7 @@ def _neural_validate(
     if not all_preds:
         log.warning("No valid predictions collected for validation.")
         return {"huber": float("inf"), "r2": float("nan"), "rmse": float("nan")}
-    
+
     return compute_all_metrics(all_targets, all_preds, threshold=threshold)
 
 
@@ -459,6 +529,7 @@ def _train_tree(
 
     if run is not None:
         import wandb
+
         wandb.log({f"val/{k}": v for k, v in metrics.items()})
 
         # Save checkpoint
