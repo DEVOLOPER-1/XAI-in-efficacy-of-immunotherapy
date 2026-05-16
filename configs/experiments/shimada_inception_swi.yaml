@@ -1,0 +1,92 @@
+# configs/experiments/shimada_inception_swi.yaml
+# Shimada et al. (2021) InceptionV3-based TMB prediction experiment
+
+experiment_name: shimada2021_inception_swi
+
+# ── Modality configuration ─────────────────────────────────────────────────
+modalities:
+  image: true
+  tabular: false   # Set to true only for fusion experiments
+
+# ── Dataset configuration ──────────────────────────────────────────────────
+dataset:
+  # Paths (relative to data_root)
+  data_root: "data"
+  tabular_file: "clinical.csv"          # Only used if modalities.tabular=true
+  images_dir: "images"
+  features_dir: "features"
+  
+  # Target & identifiers
+  target_col: "TMB_NONSYNONYMOUS"       # Continuous TMB value
+  patient_id_col: "PATIENT_ID"
+  
+  # Image/patch settings
+  use_preextracted: false                # true loads 1D numpy feature vectors from features/<PATIENT_ID>.npy vs false loads tile PNGs from images/<PATIENT_ID>/
+  patch_size: 512                       # Original tile size (if tiling)
+  max_patches: 16                       # Max tiles per slide (zero-padded if fewer)
+  image_size: 299                       # Resize to InceptionV3's native resolution
+  
+  # Splitting
+  patients_split_file: "data/master_patient_splits.csv"
+  val_ratio: 0.15
+  seed: 42
+  
+  # Batching
+  batch_size: 32
+  
+  # Target transformation (for regression stability)
+  log1p_target: false                   # Set true if TMB distribution is heavy-tailed
+  # Note: If using log1p, ensure target_mean/std are computed on log1p-transformed values
+
+# ── Model configuration ────────────────────────────────────────────────────
+model:
+  category: "image_only"                # Options: tabular_only | image_only | fusion
+  type: "inception_shimada"             # Registered in src/models/__init__.py
+  
+  # Task settings
+  task_mode: "regression"               # "regression" for continuous TMB, "classification" for TMB-H binary
+  dropout: 0.5                          # Dropout rate in task head
+  
+  # Backbone settings
+  freeze_backbone: true                 # Start frozen; unfreeze later for fine-tuning
+  
+  # Target scaling (CRITICAL for stable regression training)
+  # ⚠️ Estimate these from your training set AFTER any log1p transform:
+  target_scale: false
+  target_mean: 50.0                     # Mean of TMB in training set (adjust via EDA)
+  target_std: 30.0                      # Std of TMB in training set (adjust via EDA)
+  # Tip: Run a quick EDA script to compute: 
+  #   df["TMB"].mean(), df["TMB"].std() 
+  # and update these values before training.
+
+  # Fallback hyperparameters (training section takes precedence)
+  learning_rate: 1e-4
+  epochs: 50
+
+# ── Training hyperparameters ───────────────────────────────────────────────
+training:
+  epochs: 50
+  val_every: 5                          # Validate and log every N epochs
+  
+  # Optimisation
+  lr: 1e-4                              # Lower LR for pretrained backbone fine-tuning
+  weight_decay: 1e-4                    # L2 regularisation
+  grad_clip: 1.0                        # Max gradient norm (prevents explosion)
+  
+  # Checkpointing
+  save_dir: "logs/runs/checkpoints"
+  upload_pickled_model: false           # Set true to upload weights to W&B
+  
+  # Risk stratification (optional, for classification mode)
+  risk_threshold: 27.0                  # TMB cutoff for TMB-H classification
+
+# ── Weights & Biases configuration ─────────────────────────────────────────
+wandb:
+  entity: "mohamed-mourad-zewail-city"
+  project_name: "TMB-prediction"
+  run_name: "inception_shimada_50epochs_finetuning"
+  tags:
+    - images_only
+    - inception_cnn
+    - shimada2021
+    - feature_extractor

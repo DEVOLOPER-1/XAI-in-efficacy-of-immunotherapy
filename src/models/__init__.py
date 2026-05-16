@@ -130,7 +130,7 @@ def _load_resnet(cfg: DotDict) -> Any:
     """ResNet-based patch encoder + mean-pooling aggregator."""
     try:
         from src.models.image import ResNetEncoder  # type: ignore[import]
-        return ResNetEncoder(cfg)
+        return ResNetEncoder()
     except ImportError as exc:
         raise ImportError(
             "ResNet model requires: uv pip install torch torchvision"
@@ -194,7 +194,7 @@ def _load_wsi_rna_mcb(cfg: DotDict) -> Any:
 def _load_inception_shimada(cfg: DotDict) -> Any:
     """Shimada et al. (2021) InceptionV3 tile aggregator for TMB prediction."""
     try:
-        from src.models.image import ShimadaInceptionWSI  # type: ignore[import]
+        from src.models.shimada_inception_swi import ShimadaInceptionWSI  # type: ignore[import]
         return ShimadaInceptionWSI(cfg)
     except ImportError as exc:
         raise ImportError(
