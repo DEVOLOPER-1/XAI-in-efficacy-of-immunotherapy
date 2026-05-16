@@ -190,6 +190,17 @@ def _load_wsi_rna_mcb(cfg: DotDict) -> Any:
             "MCBFusionNet requires PyTorch: uv pip install torch"
         ) from exc
 
+
+def _load_inception_shimada(cfg: DotDict) -> Any:
+    """Shimada et al. (2021) InceptionV3 tile aggregator for TMB prediction."""
+    try:
+        from src.models.image import ShimadaInceptionWSI  # type: ignore[import]
+        return ShimadaInceptionWSI(cfg)
+    except ImportError as exc:
+        raise ImportError(
+            "ShimadaInceptionWSI requires PyTorch & torchvision: uv pip install torch torchvision"
+        ) from exc
+
 # ---------------------------------------------------------------------------
 # Sub-registries
 # ─────────────────────────────────────────────────────────────────────────
@@ -218,6 +229,7 @@ _IMAGE_REGISTRY: dict[str, Any] = {
     "google_net": _load_google_net,
     # "vit":  _load_vit,    # TODO: implement ViTEncoder
     # "abmil": _load_abmil, # TODO: implement ABMILModel
+    "inception_shimada": _load_inception_shimada,
 }
 
 _FUSION_REGISTRY: dict[str, Any] = {
