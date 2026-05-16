@@ -170,9 +170,10 @@ def _mode_predict(cfg_path: str, args: argparse.Namespace) -> None:
     # Inject explicit checkpoint into config so _load_model honours it
     # (Priority 1 over auto-discovery by experiment name).
     if getattr(args, "checkpoint", None):
-        training_cfg = cfg.get("training") or {}
-        training_cfg["checkpoint_path"] = args.checkpoint
-        cfg["training"] = training_cfg
+        if not hasattr(cfg, "training"):
+            from src.config import DotDict
+            cfg.training = DotDict({})
+        cfg.training.checkpoint_path = args.checkpoint
 
     logging.getLogger(__name__).info(
         "Mode: PREDICT | Config: %s | Split: %s | Output: %s",
