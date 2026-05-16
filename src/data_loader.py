@@ -385,6 +385,11 @@ class SlideStore:
         if not tile_paths:
             return None
 
+        # Random tile sampling — shuffle so each epoch sees a different subset.
+        # This acts as MIL-style data augmentation without any additional overhead.
+        tile_paths = list(tile_paths)
+        random.shuffle(tile_paths)
+
         tiles: list[np.ndarray] = []
         for path in tile_paths[: self._max_patches]:
             tile = cv2.imread(str(path), cv2.IMREAD_COLOR)

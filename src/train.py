@@ -267,6 +267,7 @@ def _train_neural(
     # ── LR Scheduler ──────────────────────────────────────────────────
     sched_name = training_cfg.get("scheduler", None)
     scheduler = None
+    _cosine_scheduler = False   # flag: step every epoch, not every val
     if sched_name == "ReduceLROnPlateau":
         sched_patience = int(training_cfg.get("scheduler_patience", 5))
         sched_factor = float(training_cfg.get("scheduler_factor", 0.5))
@@ -281,6 +282,17 @@ def _train_neural(
             "LR scheduler: ReduceLROnPlateau (patience=%d, factor=%.2f)",
             sched_patience,
             sched_factor,
+        )
+    elif sched_name == "CosineAnnealing":
+        T_max    = int(training_cfg.get("scheduler_T_max", num_epochs))
+        eta_min  = float(training_cfg.get("scheduler_eta_min", 1e-6))
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimiser, T_max=T_max, eta_min=eta_min
+        )
+        _cosine_scheduler = True
+        log.info(
+            "LR scheduler: CosineAnnealingLR (T_max=%d, eta_min=%.2e)",
+            T_max, eta_min,
         )
 
     # ── AMP (Automatic Mixed Precision) ────────────────────────────────────
@@ -328,9 +340,8 @@ def _train_neural(
                 continue
             target = target.to(device, non_blocking=True)
 
-            # ── Optional log1p transform (stabilises heavy-tailed targets) ─
-            if log1p_target:
-                target = torch.log1p(target.clamp(min=0.0))
+            # Target is RAW TMB here. Do NOT manually log1p it, because
+            # _transform_regression_values handles BOTH log1p and standardisation.
 
             # ── Skip batches with all-NaN targets ─────────────────────────
             valid = ~torch.isnan(target)
@@ -338,6 +349,7 @@ def _train_neural(
                 continue
 
             optimiser.zero_grad(set_to_none=True)
+
             # ── Forward pass (inside AMP autocast) ────────────────────────
             try:
                 with torch.amp.autocast("cuda", enabled=use_amp):
@@ -356,11 +368,12 @@ def _train_neural(
                 continue
 
             # ── Scale targets for stable loss computation ─────────────────
+            # Model directly outputs in the scaled space (mean 0, std 1), so we
+            # only transform the target, and compare directly.
             transformed_target = _transform_regression_values(target, cfg)
-            transformed_preds = _transform_regression_values(preds, cfg)
 
-            # ── Loss on valid, scaled targets (float32) ─────────────────────
-            loss = criterion(transformed_preds[valid], transformed_target[valid])
+            # preds are already in scaled space, don't transform them!
+            loss = criterion(preds[valid], transformed_target[valid])
 
             # ── Guard against NaN/Inf loss ────────────────────────────────
             if not torch.isfinite(loss):
@@ -385,6 +398,10 @@ def _train_neural(
         # ── Epoch summary ─────────────────────────────────────────────────
         mean_loss = np.mean(epoch_losses) if epoch_losses else float("nan")
 
+        # CosineAnnealingLR steps every epoch (not tied to val frequency)
+        if _cosine_scheduler and scheduler is not None:
+            scheduler.step()
+
         # ── Validation at configured intervals ────────────────────────────
         if epoch % val_every == 0 or epoch == num_epochs:
             metrics = _neural_validate(model, val_loader, cfg, threshold=threshold)
@@ -399,8 +416,8 @@ def _train_neural(
                 optimiser.param_groups[0]["lr"],
             )
 
-            # ── LR scheduler step (on val_huber) ──────────────────────────
-            if scheduler is not None:
+            # ── LR scheduler step (ReduceLROnPlateau only — needs val metric) ─
+            if scheduler is not None and not _cosine_scheduler:
                 scheduler.step(metrics["huber"])
 
             # ── W&B logging ───────────────────────────────────────────────
@@ -443,7 +460,12 @@ def _neural_validate(
     cfg: DotDict,
     threshold: float | None = None,
 ) -> dict[str, float]:
-    """Validate a neural model and return all medical metrics."""
+    """Validate a neural model and return all medical metrics.
+
+    Predictions are inverse-transformed from training space (standardized
+    log1p) back to raw TMB space before metric computation, so val_huber
+    and R² are always on the same scale as the ground-truth targets.
+    """
     import torch
 
     device = next(model.parameters()).device
@@ -465,21 +487,25 @@ def _neural_validate(
                 if batch["tabular"] is not None
                 else None
             )
-            targets = batch["target"]  # Keep as numpy for metric computation
+            targets = batch["target"]  # raw TMB values (numpy)
 
             # ── Forward pass ──────────────────────────────────────────────
             try:
-                raw_preds = model(image, tabular).view(-1)
-
-                # Unscale the log-predictions back to real-world TMB space!
-                preds = _transform_regression_values(raw_preds, cfg, inverse=True)
-                preds = preds.cpu().numpy()  # Perfectly safe here in validation!
-
+                preds_tensor = model(image, tabular).view(-1)
             except Exception:
                 continue  # Skip problematic batches
 
+            # ── Inverse-transform predictions → raw TMB space ─────────────
+            # Model predicts in (log1p(TMB) - mean) / std space.
+            # Undo: pred_raw = expm1(pred_scaled * std + mean)
+            # Without this, val_huber compares ~0 (scaled) vs ~14 (raw TMB) —
+            # making both val_huber and R² completely meaningless.
+            preds_raw = _transform_regression_values(
+                preds_tensor, cfg, inverse=True
+            ).cpu().numpy()
+
             # ── Collect finite predictions/targets ────────────────────────
-            for p, t in zip(np.asarray(preds), np.asarray(targets)):
+            for p, t in zip(np.asarray(preds_raw), np.asarray(targets)):
                 if np.isfinite(p) and np.isfinite(t):
                     all_preds.append(float(p))
                     all_targets.append(float(t))
