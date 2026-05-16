@@ -10,27 +10,27 @@ dataset:
 #    features_dir       str   "features"
 #    target_col         str   "survival_months"
 #    patient_id_col     str   "PATIENT_ID"
-#    use_preextracted   bool  true     ← load .npy features; false = tile SVS on-the-fly
+#    use_preextracted   bool  true     ← true loads 1D numpy feature vectors from features/<PATIENT_ID>.npy;  false loads tile PNGs from images/<PATIENT_ID>/
 #    patch_size         int   256      ← tile size when tiling SVS on-the-fly
 #    max_patches        int   16       ← patches sampled per slide per epoch
 #    val_ratio          float 0.15
 #    seed               int   42
 #    batch_size         int   32
 #    image_size         int   224      ← resize each patch/tile to this resolution
-#    data_root: "data/processed"
-#    tabular_file: "clinical.csv"
-#    images_dir: "images"
-#    features_dir: "features"
-#    target_col: "TMB"
-#    patient_id_col: "PATIENT_ID"
-#    use_preextracted: true
+    data_root: "data"
+    tabular_file: "clinical.csv"
+    images_dir: "images"
+    features_dir: "features"
+    target_col: "TMB_NONSYNONYMOUS"
+    patient_id_col: "PATIENT_ID"
+    use_preextracted: false
 #    patch_size: 256
 #    max_patches: 16
 #    val_ratio: 0.15
-#    seed: 42
+    seed: 42
 #    batch_size: 32
 #    image_size: 224
-    "patients_split_file":  "data/processed/master_patient_splits.csv"
+    "patients_split_file":  "data/master_patient_splits.csv"
 model:
 #    category: "tabular_only"        # "tabular_only", "image_only", or "fusion"
 #    fusion_strategy: "early"        # "early" or "late"

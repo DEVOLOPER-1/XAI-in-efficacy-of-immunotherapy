@@ -249,7 +249,7 @@ def load_feature_extractor(cfg: Dict[str, Any]) -> tuple:
     return model, processor, device, feature_dim, normalize_cfg
 
 
-def extract_patient_tiles_and_features(
+def extract_patient_tiles_and_feature_vector(
     svs_path: Path,
     patient_id: str,
     model: torch.nn.Module,
@@ -336,7 +336,7 @@ def extract_patient_tiles_and_features(
         blank_tile = np.zeros((resize_to, resize_to, 3), dtype=np.uint8)
         _save_tile_png(blank_tile, patient_image_dir / "tile_000.png")
 
-    return np.stack(features)  # Shape: (16, feature_dim)
+    return np.mean(np.stack(features, axis=0), axis=0).astype(np.float32)
 
 
 def download_chunk(chunk_df: pl.DataFrame, cfg: Dict[str, Any], chunk_idx: int) -> None:
@@ -420,7 +420,7 @@ def main(base_config: str, override_config: Optional[str] = None) -> None:
                 continue
 
             try:
-                features = extract_patient_tiles_and_features(
+                features = extract_patient_tiles_and_feature_vector(
                     svs_path, pid, model, device, cfg
                 )
                 np.save(feat_path, features)

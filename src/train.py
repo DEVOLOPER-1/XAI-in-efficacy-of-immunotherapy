@@ -1,40 +1,25 @@
 """
 src/train.py — Multimodal Cancer Research training loop for WhiteBox.
 
-Responsibilities:
-  - Instantiate model via the registry (src.models.get_model).
-  - Run training epochs over batched PatientSample dicts from data_loader.
-  - Handle mixed inputs:  outputs = model(batch["image"], batch["tabular"])
-  - Support tree-based models (XGBoost / CatBoost) that use fit() rather
-    than gradient-descent epochs.
-  - Log to W&B: config once at init; medical metrics at validation steps;
-    final summary at end.
-  - Save the best checkpoint based on validation RMSE.
+This file handles:
+- Model instantiation via registry (src.models.get_model)
+- Training loops for neural (PyTorch) and tree-based (sklearn/xgboost) models
+- Mixed-modality support: models receive (image, tabular) where either may be None
+- W&B logging: config at init, metrics at validation steps, summary at end
+- Checkpointing: save best model by validation Huber loss
 
-Hardware efficiency metrics (latency, FLOPs, model size) are NOT computed
-here — they are irrelevant to the cancer research task.
-
-W&B logging strategy (bandwidth-conscious, per STANDARDS):
-  - Hyperparameters → wandb.config   (once, at run init)
-  - Validation metrics → wandb.log   (every cfg.training.val_every epochs)
-  - Final summary → run.summary      (best values for leaderboard table)
-
-Usage (called from main.py):
-    from src.config import load_config
-    from src.train import train
-    cfg = load_config("configs/experiments/fusion_early.yaml")
-    train(cfg)
+Design principles:
+- Modality-agnostic: all tensor conversions guard against None inputs
+- Numerically stable: target scaling, gradient clipping, NaN guards
+- Reproducible: seeds, deterministic splits, config-driven hyperparameters
 """
-
 from __future__ import annotations
-
 from datetime import datetime
 import logging
 from pathlib import Path
 from typing import Any
-
 import numpy as np
-
+import torch
 from src.config import DotDict
 from src.models import get_model
 from src.utils import compute_all_metrics, save_checkpoint
@@ -42,11 +27,9 @@ from src.utils import compute_all_metrics, save_checkpoint
 log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# W&B initialisation (unchanged from original standards)
-# ---------------------------------------------------------------------------
-
-
+# ───────────────────────────────────────────────────────────────────────────
+# W&B initialisation
+# ───────────────────────────────────────────────────────────────────────────
 def _init_wandb(cfg: DotDict) -> Any:
     """Initialise W&B run and log the full merged config as hyperparameters."""
     try:
@@ -57,27 +40,24 @@ def _init_wandb(cfg: DotDict) -> Any:
             "Install with: uv pip install wandb"
         )
         return None
-
+    
     wandb_cfg = cfg.get("wandb") or DotDict({})
+    model_cfg = cfg.get("model") or DotDict({})
+    
     run = wandb.init(
         project=wandb_cfg.get("project", "TMB-prediction"),
         entity=wandb_cfg.get("entity", "mohamed-mourad-zewail-city"),
-        name=wandb_cfg.get("run_name", f"{datetime.now()}-{cfg.model.type}"),
-        tags=wandb_cfg.get("tags", [])
-        + [
-            "success",
-        ],
+        name=wandb_cfg.get("run_name", f"{datetime.now()}-{model_cfg.get('type', 'model')}"),
+        tags=wandb_cfg.get("tags", []) + ["success"],
         config=cfg.to_dict(),  # full merged config as hyperparameters — reproducible
     )
     log.info("W&B run initialised: %s", run.url)
     return run
 
 
-# ---------------------------------------------------------------------------
+# ───────────────────────────────────────────────────────────────────────────
 # Backend detection helper
-# ---------------------------------------------------------------------------
-
-
+# ───────────────────────────────────────────────────────────────────────────
 def _is_tree_model(cfg: DotDict) -> bool:
     """Return True for tree-based models that use fit() instead of forward()."""
     tree_types = {
@@ -89,24 +69,14 @@ def _is_tree_model(cfg: DotDict) -> bool:
         "gradient_boosted",
     }
     model_cfg = cfg.get("model") or DotDict({})
-    return (model_cfg.get("type") or "").lower() in tree_types
+    return (model_cfg.get("type") or "").lower().strip() in tree_types
 
 
-# ---------------------------------------------------------------------------
+# ───────────────────────────────────────────────────────────────────────────
 # Main training entry point
-# ---------------------------------------------------------------------------
-
-
+# ───────────────────────────────────────────────────────────────────────────
 def train(cfg: DotDict) -> dict[str, float]:
-    """Run the full training loop for the given experiment config.
-
-    Args:
-        cfg: Merged experiment config (DotDict from load_config).
-
-    Returns:
-        Dict of best validation metrics: rmse, mae, r2, pearson_r, c_index.
-        Copy these values into logs/leaderboard.csv.
-    """
+    """Run the full training loop for the given experiment config."""
     # ── 1. W&B ───────────────────────────────────────────────────────────────
     run = _init_wandb(cfg)
 
@@ -121,7 +91,6 @@ def train(cfg: DotDict) -> dict[str, float]:
 
     # ── 3. Data ───────────────────────────────────────────────────────────────
     from src.data_loader import build_dataloaders
-
     train_loader, val_loader, _ = build_dataloaders(cfg)
     log.info(
         "Data ready — train: %d batches | val: %d batches",
@@ -144,11 +113,58 @@ def train(cfg: DotDict) -> dict[str, float]:
     return best_metrics
 
 
-# ---------------------------------------------------------------------------
+# ───────────────────────────────────────────────────────────────────────────
+# Helper: Target scaling/unscaling (for regression stability)
+# ───────────────────────────────────────────────────────────────────────────
+def _scale_targets(
+    targets: torch.Tensor,
+    cfg: DotDict,
+    inverse: bool = False,
+) -> torch.Tensor:
+    """
+    Scale/unscale regression targets using config stats for stable training.
+    
+    Args:
+        targets: (B,) tensor of raw target values
+        cfg: experiment config with model.target_mean/std
+        inverse: if True, unscale (model output → original scale)
+    Returns:
+        scaled or unscaled targets
+    """
+    model_cfg = cfg.get("model") or DotDict({})
+    if not model_cfg.get("target_scale", False):
+        return targets
+    
+    mean = float(model_cfg.get("target_mean", 0.0))
+    std = float(model_cfg.get("target_std", 1.0))
+    
+    # Guard against division by zero or near-zero std
+    if std < 1e-6:
+        log.warning("target_std=%.6f is too small; skipping scaling.", std)
+        return targets
+    
+    if inverse:
+        return targets * std + mean
+    return (targets - mean) / std
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Helper: Numpy → torch tensor (with None handling)
+# ───────────────────────────────────────────────────────────────────────────
+def _to_tensor(array: np.ndarray | None) -> torch.Tensor | None:
+    """Convert numpy array to float32 torch tensor. Pass-through for None."""
+    if array is None:
+        return None
+    try:
+        return torch.from_numpy(array).float()
+    except Exception as e:
+        log.warning("Failed to convert array to tensor: %s", e)
+        return None
+
+
+# ───────────────────────────────────────────────────────────────────────────
 # Neural network training (PyTorch gradient descent)
-# ---------------------------------------------------------------------------
-
-
+# ───────────────────────────────────────────────────────────────────────────
 def _train_neural(
     model: Any,
     train_loader: Any,
@@ -156,89 +172,154 @@ def _train_neural(
     cfg: DotDict,
     run: Any,
 ) -> dict[str, float]:
-    """Train a PyTorch model with AdamW and MSE loss."""
-    import torch
+    """Train a PyTorch model with AdamW and Huber loss, with full modality support."""
     import torch.nn as nn
 
     training_cfg = cfg.get("training") or DotDict({})
-    num_epochs = training_cfg.get("epochs", 100)
-    val_every = training_cfg.get("val_every", 5)
-    lr = training_cfg.get("lr", 1e-3)
-    weight_decay = training_cfg.get("weight_decay", 1e-4)
+    ds_cfg = cfg.get("dataset") or DotDict({})
+    model_cfg_inner = cfg.get("model") or DotDict({})
+
+    # ── Hyperparameters with safe type casting ─────────────────────────────
+    num_epochs = int(training_cfg.get("epochs", 100))
+    val_every = int(training_cfg.get("val_every", 5))
+    
+    # Learning rate: prefer training.lr, fallback to model.learning_rate, default 1e-4
+    lr_raw = training_cfg.get("lr") or model_cfg_inner.get("learning_rate", 1e-4)
+    lr = float(lr_raw) if lr_raw is not None else 1e-4
+    
+    weight_decay_raw = training_cfg.get("weight_decay", 1e-4)
+    weight_decay = float(weight_decay_raw) if weight_decay_raw is not None else 1e-4
+    
+    grad_clip_raw = training_cfg.get("grad_clip", None)
+    grad_clip = float(grad_clip_raw) if grad_clip_raw is not None else None
+    
+    log1p_target = bool(ds_cfg.get("log1p_target", False))
+    
     save_dir = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
     experiment_id = cfg.get("experiment_name") or "experiment"
+    wandb_cfg = cfg.get("wandb") or DotDict({})
+    run_name = wandb_cfg.get("run_name") or experiment_id
     threshold = training_cfg.get("risk_threshold", None)
-    save_path = save_dir / f"{cfg.wandb.run_name}_weights.pth"
+    save_path = save_dir / f"{run_name}_weights.pth"
 
+    # Logging
+    if log1p_target:
+        log.info("log1p_target=True — targets will be log1p-transformed.")
+    if model_cfg_inner.get("target_scale", False):
+        log.info(
+            "target_scale=True — targets standardized (mean=%.2f, std=%.2f).",
+            model_cfg_inner.get("target_mean", 0.0),
+            model_cfg_inner.get("target_std", 1.0),
+        )
+
+    # ── Optimiser & loss ───────────────────────────────────────────────────
     optimiser = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model._est.parameters()),
         lr=lr,
         weight_decay=weight_decay,
     )
-    criterion = nn.HuberLoss(delta=1.0)
+    criterion = nn.HuberLoss(delta=1.0)  # Robust to outliers vs MSE
 
     best_huber: float = float("inf")
     best_metrics: dict[str, float] = {}
 
     log.info(
-        "Neural training — epochs: %d | val_every: %d | lr: %g",
-        num_epochs,
-        val_every,
-        lr,
+        "Neural training — epochs: %d | val_every: %d | lr: %g | grad_clip: %s",
+        num_epochs, val_every, lr, grad_clip,
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     log.info("Using device: %s", device)
+
+    # ── Training loop ──────────────────────────────────────────────────────
     for epoch in range(1, num_epochs + 1):
-        # -- Train one epoch -------------------------------------------------
         model.train()
         epoch_losses: list[float] = []
 
         for batch in train_loader:
+            # ── Modality-safe tensor conversion ───────────────────────────
             image = (
-                _to_tensor(batch["image"]).to(device)
+                _to_tensor(batch["image"]).to(device, non_blocking=True)
                 if batch["image"] is not None
                 else None
             )
-            tabular = _to_tensor(batch["tabular"]).to(device)
-            target = _to_tensor(batch["target"]).to(device)
+            tabular = (
+                _to_tensor(batch["tabular"]).to(device, non_blocking=True)
+                if batch["tabular"] is not None
+                else None
+            )
+            target = _to_tensor(batch["target"])
+            if target is None:
+                continue
+            target = target.to(device, non_blocking=True)
 
-            # Skip batches where every target is NaN (test/unlabelled patients)
+            # ── Optional log1p transform (stabilises heavy-tailed targets) ─
+            if log1p_target:
+                target = torch.log1p(target.clamp(min=0.0))
+
+            # ── Skip batches with all-NaN targets ─────────────────────────
             valid = ~torch.isnan(target)
             if valid.sum() == 0:
                 continue
 
-            optimiser.zero_grad()
+            optimiser.zero_grad(set_to_none=True)
 
-            # Forward pass: preds should be (B,)
-            preds = model(image, tabular).squeeze(-1)
+            # ── Forward pass ──────────────────────────────────────────────
+            try:
+                preds = model(image, tabular)
+                if preds is None:
+                    log.warning("Model returned None — skipping batch.")
+                    continue
+                preds = preds.squeeze(-1)  # Ensure shape (B,)
+            except Exception as e:
+                log.warning("Forward pass failed: %s — skipping batch.", e)
+                continue
 
-            # Huber Loss handles the valid indices
-            loss = criterion(preds[valid], target[valid])
+            # ── Numerical guards on predictions ───────────────────────────
+            if not torch.isfinite(preds).all():
+                log.warning("Non-finite predictions detected — skipping batch.")
+                continue
+
+            # ── Scale targets for stable loss computation ─────────────────
+            scaled_target = _scale_targets(target, cfg)
+
+            # ── Loss on valid, scaled targets ─────────────────────────────
+            loss = criterion(preds[valid], scaled_target[valid])
+
+            # ── Guard against NaN/Inf loss ────────────────────────────────
+            if not torch.isfinite(loss):
+                log.warning("Epoch %d: non-finite loss — skipping batch.", epoch)
+                continue
+
+            # ── Backward + optimisation ───────────────────────────────────
             loss.backward()
+
+            # Gradient clipping (prevents explosion in deep nets)
+            if grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(
+                    filter(lambda p: p.requires_grad, model._est.parameters()),
+                    grad_clip,
+                )
+
             optimiser.step()
             epoch_losses.append(loss.item())
 
+        # ── Epoch summary ─────────────────────────────────────────────────
         mean_loss = np.mean(epoch_losses) if epoch_losses else float("nan")
 
-        # -- Validate (and log) at configured intervals ----------------------
+        # ── Validation at configured intervals ────────────────────────────
         if epoch % val_every == 0 or epoch == num_epochs:
-            metrics = _neural_validate(model, val_loader, threshold=threshold)
+            metrics = _neural_validate(model, val_loader, cfg, threshold=threshold)
 
             log.info(
                 "Epoch %d/%d — train_loss: %.4f | val_huber: %.4f | R²: %.4f",
-                epoch,
-                num_epochs,
-                mean_loss,
-                metrics["huber"],
-                metrics["r2"],
+                epoch, num_epochs, mean_loss, metrics["huber"], metrics["r2"],
             )
 
-            # Log to W&B only at validation steps (bandwidth-conscious)
+            # ── W&B logging ───────────────────────────────────────────────
             if run is not None:
                 import wandb
-
                 wandb.log(
                     {
                         "epoch": epoch,
@@ -248,13 +329,16 @@ def _train_neural(
                     step=epoch,
                 )
 
+            # ── Checkpointing ─────────────────────────────────────────────
             if metrics["huber"] < best_huber:
                 best_huber = metrics["huber"]
                 best_metrics = metrics
                 save_checkpoint(model, save_path)
                 log.info("  ↳ New best Huber=%.4f — checkpoint saved.", best_huber)
 
-    if training_cfg.get("upload_pickled_model", False):
+    # ── Optional model artifact upload ───────────────────────────────────
+    if training_cfg.get("upload_pickled_model", False) and run is not None:
+        import wandb
         artifact = wandb.Artifact(name="run_weights", type="model")
         artifact.add_file(str(save_path))
         run.log_artifact(artifact)
@@ -262,15 +346,19 @@ def _train_neural(
     return best_metrics
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# Neural validation loop (with target unscaling for metrics)
+# ───────────────────────────────────────────────────────────────────────────
 def _neural_validate(
     model: Any,
     loader: Any,
+    cfg: DotDict,
     threshold: float | None = None,
 ) -> dict[str, float]:
     """Validate a neural model and return all medical metrics."""
     import torch
 
-    device = next(model.parameters()).device  # Get device from model weights
+    device = next(model.parameters()).device
     model.eval()
 
     all_preds: list[float] = []
@@ -278,41 +366,46 @@ def _neural_validate(
 
     with torch.no_grad():
         for batch in loader:
+            # ── Modality-safe tensor conversion ───────────────────────────
             image = (
-                _to_tensor(batch["image"]).to(device)
+                _to_tensor(batch["image"]).to(device, non_blocking=True)
                 if batch["image"] is not None
                 else None
             )
-            tabular = _to_tensor(batch["tabular"]).to(device)
-            targets = batch["target"]
+            tabular = (
+                _to_tensor(batch["tabular"]).to(device, non_blocking=True)
+                if batch["tabular"] is not None
+                else None
+            )
+            targets = batch["target"]  # Keep as numpy for metric computation
 
-            preds = model(image, tabular).squeeze(-1).cpu().numpy()
+            # ── Forward pass ──────────────────────────────────────────────
+            try:
+                preds = model(image, tabular).squeeze(-1).cpu().numpy()
+            except Exception:
+                continue  # Skip problematic batches
 
-            for p, t in zip(preds, targets):
-                if not np.isnan(t):
+            # ── Unscale predictions before metric computation ─────────────
+            preds_tensor = torch.from_numpy(preds)
+            unscaled_preds = _scale_targets(preds_tensor, cfg, inverse=True).numpy()
+
+            # ── Collect finite predictions/targets ────────────────────────
+            for p, t in zip(unscaled_preds, np.asarray(targets)):
+                if np.isfinite(p) and np.isfinite(t):
                     all_preds.append(float(p))
                     all_targets.append(float(t))
 
+    # ── Compute metrics (handles empty lists gracefully) ─────────────────
+    if not all_preds:
+        log.warning("No valid predictions collected for validation.")
+        return {"huber": float("inf"), "r2": float("nan"), "rmse": float("nan")}
+    
     return compute_all_metrics(all_targets, all_preds, threshold=threshold)
 
 
-def _to_tensor(array: "np.ndarray | None") -> "Any":
-    """Convert numpy array to float32 torch tensor. Pass-through for None."""
-    if array is None:
-        return None
-    try:
-        import torch
-
-        return torch.from_numpy(array).float()
-    except ImportError:
-        return array
-
-
-# ---------------------------------------------------------------------------
-# Tree-based model training (XGBoost / CatBoost)
-# ---------------------------------------------------------------------------
-
-
+# ───────────────────────────────────────────────────────────────────────────
+# Tree-based model training (XGBoost / CatBoost / sklearn)
+# ───────────────────────────────────────────────────────────────────────────
 def _train_tree(
     model: Any,
     train_loader: Any,
@@ -320,11 +413,7 @@ def _train_tree(
     cfg: DotDict,
     run: Any,
 ) -> dict[str, float]:
-    """Accumulate all tabular batches and call model.fit() in one shot.
-
-    Tree models do not iterate epochs — the loader is drained once into
-    a single (N, F) matrix.
-    """
+    """Accumulate all tabular batches and call model.fit() in one shot."""
     log.info("Tree model training — collecting batches…")
 
     X_train, y_train = _collect_tabular(train_loader)
@@ -352,22 +441,21 @@ def _train_tree(
     if hasattr(model, "print_feature_importances") and callable(
         model.print_feature_importances
     ):
+        model_cfg = cfg.get("model") or DotDict({})
         model.print_feature_importances(
             feature_names=train_loader.feature_names,
-            top_n=cfg.model.select_top_k,
+            top_n=model_cfg.get("select_top_k"),
         )
-    else:
-        log.debug("Model does not implement print_feature_importances; skipping.")
 
     if run is not None:
         import wandb
-
         wandb.log({f"val/{k}": v for k, v in metrics.items()})
 
         # Save checkpoint
         training_cfg = cfg.get("training") or DotDict({})
+        wandb_cfg = cfg.get("wandb") or DotDict({})
         save_dir = Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
-        run_name = cfg.wandb.get("run_name") or "experiment"
+        run_name = wandb_cfg.get("run_name") or "experiment"
         save_checkpoint(model, save_dir / f"{run_name}_weights.pkl")
 
         if training_cfg.get("upload_pickled_model", False):
@@ -380,12 +468,8 @@ def _train_tree(
 
 def _collect_tabular(
     loader: Any,
-) -> tuple["np.ndarray | None", "np.ndarray | None"]:
-    """Drain a batch loader and stack all tabular arrays + targets.
-
-    Rows with NaN targets are skipped so missing labels are not turned into
-    real ``0.0`` targets for training or validation.
-    """
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Drain a batch loader and stack all tabular arrays + targets."""
     X_parts: list[np.ndarray] = []
     y_parts: list[np.ndarray] = []
     skipped_targets = 0
@@ -408,7 +492,7 @@ def _collect_tabular(
 
     if skipped_targets:
         log.warning(
-            "Skipped %d tabular rows with NaN targets while collecting data for tree model.",
+            "Skipped %d tabular rows with NaN targets while collecting data.",
             skipped_targets,
         )
 

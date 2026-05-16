@@ -18,6 +18,14 @@ class _TorchBase:
     def parameters(self):
         return self._est.parameters()
 
+    def state_dict(self):
+        """Delegate to inner nn.Module for torch checkpoint compatibility."""
+        return self._est.state_dict()
+
+    def load_state_dict(self, state_dict, strict=True):
+        """Delegate to inner nn.Module for torch checkpoint compatibility."""
+        return self._est.load_state_dict(state_dict, strict=strict)
+
     def train(self, mode: bool = True):
         self._est.train(mode)
         return self

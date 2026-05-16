@@ -11,8 +11,8 @@ Expected data layout on disk (configured via cfg.dataset.*):
     │       ├── tile_000.png         ← tiled RGB patches saved by `data_builder.py`
     │       ├── tile_001.png
     │       └── ...
-    └── features/                    ← (optional) pre-extracted patch features
-        └── <PATIENT_ID>.npy         ← (N_patches, feature_dim) float32 array
+    └── features/                    ← (optional) per-patient feature vectors
+        └── <PATIENT_ID>.npy         ← (feature_dim,) float32 array
 
 Modality availability per patient:
   - tabular-only : row in CSV, no tiles / .npy      → image is None in sample
@@ -32,9 +32,9 @@ Config keys read (all under cfg.dataset.*):
     features_dir       str   "features"
     target_col         str   "survival_months"
     patient_id_col     str   "PATIENT_ID"
-    use_preextracted   bool  true     ← load .npy features; false = tile SVS on-the-fly
-    patch_size         int   256      ← tile size when tiling SVS on-the-fly
-    max_patches        int   16       ← patches sampled per slide per epoch
+    use_preextracted   bool  true     ← load 1D .npy feature vectors; false = load PNG tiles
+    patch_size         int   256      ← legacy SVS tiling fallback only
+    max_patches        int   16       ← max tiles/features per patient per batch
     val_ratio          float 0.15
     seed               int   42
     batch_size         int   32
@@ -54,7 +54,7 @@ import logging
 import math
 from pathlib import Path
 import random
-from typing import Any, Iterator
+from typing import Any, Iterator, cast
 
 import numpy as np
 import pandas as pd
@@ -80,11 +80,10 @@ class PatientSample:
         patient_id : Unique patient identifier (matches the CSV / folder name).
         tabular    : 1-D float32 array of shape (n_features,).
                      None if patient is absent from the tabular CSV.
-        image      : float32 array of shape (N, C, H, W):
-                       - Mode A (preextracted): shape is (N_patches, feature_dim, 1, 1)
-                         or (N_patches, feature_dim) depending on the extractor.
-                       - Mode B (on-the-fly):   shape is (N_tiles, 3, H, W).
-                     None if no slide or feature file was found.
+        image      : float32 array of shape:
+                       - PNG tile mode:         (N_tiles, 3, H, W)
+                       - pre-extracted mode:    (feature_dim,)
+                     None if no image tiles or feature file was found.
         target     : Float regression target. None for test patients.
         modalities : Set of active modality strings, e.g. {"tabular", "image"}.
     """
@@ -262,7 +261,7 @@ class TabularStore:
 
 
 class SlideStore:
-    """Loads pathology tiles or pre-extracted features for each patient.
+    """Loads pathology tiles or per-patient feature vectors for each patient.
 
     Mode A — pre-extracted features (default, recommended):
         Loads a .npy array of shape (N_patches, feature_dim) saved by your
@@ -272,10 +271,6 @@ class SlideStore:
     Mode B — tiled PNG images:
         Loads patient tile PNGs from `images/<PATIENT_ID>/`, resizes them to
         `image_size` if needed, and normalises to ImageNet mean/std.
-
-    Legacy fallback — on-the-fly SVS tiling (requires openslide-python):
-        If a patient still has an SVS/TIFF rather than PNG tiles, the store can
-        open it directly and sample tiles for compatibility.
 
     Install:
         Mode A: no extra deps.
@@ -294,7 +289,7 @@ class SlideStore:
         patch_size: int = 256,
         max_patches: int = 16,
         image_size: int = 224,
-        manifest_path: Path | None = None,  # NEW: For UUID mapping
+        manifest_path: Path | None = None,
     ) -> None:
         self._images_dir = images_dir
         self._features_dir = features_dir
@@ -303,41 +298,7 @@ class SlideStore:
         self._max_patches = max_patches
         self._image_size = image_size
 
-        # --- 1. TSV / UUID Mapping ---
-        self._manifest_map: dict[str, Path] = {}
-        if not use_preextracted and manifest_path and manifest_path.exists():
-            df = pd.read_csv(str(manifest_path), sep="\t")
-            for _, row in df.iterrows():
-                pid = row["Case ID"]
-                # Map Patient -> data/images/<UUID_Folder>/<File.svs>
-                svs_path = self._images_dir / row["File ID"] / row["File Name"]
-                if pid not in self._manifest_map:
-                    self._manifest_map[pid] = svs_path
-
         self._patient_ids_cache = self._discover_patient_ids()
-
-        # --- 2. Augmentation & Normalization Tools ---
-        if not use_preextracted:
-            import albumentations as A
-
-            self.augmentor = A.Compose(
-                [
-                    A.HorizontalFlip(p=0.5),
-                    A.VerticalFlip(p=0.5),
-                    A.Affine(
-                        translate_percent={"x": (-0.1, 0.1), "y": (-0.1, 0.1)}, p=0.5
-                    ),
-                ]
-            )
-            try:
-                import torchstain
-
-                self.normalizer = torchstain.normalizers.MacenkoNormalizer(
-                    backend="numpy"
-                )
-            except ImportError:
-                self.normalizer = None
-                log.warning("torchstain missing. Macenko skipped.")
 
     def patient_has_data(self, patient_id: str) -> bool:
         """Return True if any image/feature data exists for this patient."""
@@ -357,18 +318,13 @@ class SlideStore:
             for patient_dir in self._images_dir.iterdir():
                 if patient_dir.is_dir() and any(patient_dir.glob("*.png")):
                     patient_ids.add(patient_dir.name)
-
-        patient_ids.update(pid for pid, path in self._manifest_map.items() if path.exists())
         return patient_ids
 
     def get_image(self, patient_id: str) -> np.ndarray | None:
         """Load and return image data for *patient_id*, or None if absent."""
         if self._use_preextracted:
             return self._load_preextracted(patient_id)
-        image = self._load_tile_directory(patient_id)
-        if image is not None:
-            return image
-        return self._tile_svs(patient_id)
+        return self._load_tile_directory(patient_id)
 
     # ------------------------------------------------------------------
     # Mode A
@@ -378,7 +334,24 @@ class SlideStore:
         path = self._features_dir / f"{patient_id}.npy"
         if not path.exists():
             return None
-        return np.load(path).astype(np.float32)
+        arr = np.load(path).astype(np.float32)
+        if arr.ndim == 1:
+            return arr
+
+        if arr.ndim == 2:
+            log.warning(
+                "Patient %s: expected a 1D feature vector but found shape %s; using mean pooling.",
+                patient_id,
+                arr.shape,
+            )
+            return arr.mean(axis=0).astype(np.float32)
+
+        log.warning(
+            "Patient %s: unexpected feature array shape %s; flattening to 1D.",
+            patient_id,
+            arr.shape,
+        )
+        return arr.reshape(-1).astype(np.float32)
 
     def _load_tile_directory(self, patient_id: str) -> np.ndarray | None:
         """Load PNG tiles saved under `images/<PATIENT_ID>/`."""
@@ -407,70 +380,9 @@ class SlideStore:
             tile = tile.astype(np.float32) / 255.0
             tile = _resize_hwc(tile, self._image_size)
             tile = (tile - self._MEAN) / self._STD
-            tile = tile.transpose(2, 0, 1)
-            tiles.append(tile)
+            tile_arr = cast(np.ndarray, tile).transpose(2, 0, 1).astype(np.float32, copy=False)
+            tiles.append(tile_arr)
 
-        return np.stack(tiles, axis=0) if tiles else None
-
-    def _tile_svs(self, patient_id: str) -> np.ndarray | None:
-        """Sample random tiles from the patient's SVS file.
-
-        Returns float32 (N, 3, H, W) tensor normalised to ImageNet stats.
-        """
-        if patient_id not in self._manifest_map:
-            return None
-        svs_path = self._manifest_map[patient_id]
-
-        import openslide
-        import cv2
-
-        try:
-            slide = openslide.OpenSlide(str(svs_path))
-        except openslide.OpenSlideError as exc:
-            log.error("Cannot open WSI %s: %s", svs_path, exc)
-            return None
-
-        width, height = slide.dimensions
-        ps = self._patch_size
-        grid_w, grid_h = max(1, width // ps), max(1, height // ps)
-
-        all_indices = list(range(grid_w * grid_h))
-        random.shuffle(all_indices)  # Shuffle to randomly hunt for tissue
-
-        tiles: list[np.ndarray] = []
-        for idx in all_indices:
-            if len(tiles) >= self._max_patches:
-                break
-
-            x_off = (idx % grid_w) * ps
-            y_off = (idx // grid_w) * ps
-
-            region = slide.read_region((x_off, y_off), 0, (ps, ps)).convert("RGB")
-            tile_np = np.array(region)
-
-            # 1. Tissue Detection (Drop White Glass)
-            gray = cv2.cvtColor(tile_np, cv2.COLOR_RGB2GRAY)
-            if (np.sum(gray > 220) / (ps * ps)) > 0.5:
-                continue
-
-                # 2. Macenko Normalization
-            if self.normalizer:
-                try:
-                    tile_np, _, _ = self.normalizer.normalize(I=tile_np, stains=False)
-                except Exception:
-                    continue  # Skip if SVD fails on uniform patches
-
-            # 3. Augmentations
-            tile_np = self.augmentor(image=tile_np)["image"]
-
-            # 4. Standardize to ImageNet
-            tile_np = tile_np.astype(np.float32) / 255.0
-            tile_np = _resize_hwc(tile_np, self._image_size)
-            tile_np = (tile_np - self._MEAN) / self._STD
-            tile_np = tile_np.transpose(2, 0, 1)
-            tiles.append(tile_np)
-
-        slide.close()
         return np.stack(tiles, axis=0) if tiles else None
 
 
@@ -587,7 +499,7 @@ def collate_patients(samples: list[PatientSample]) -> dict[str, Any]:
     Keys in the returned dict:
         "patient_ids" : list[str]               length B
         "tabular"     : float32 ndarray (B, F)  or None
-        "image"       : float32 ndarray (B, N, ...) or None — zero-padded for missing
+        "image"       : float32 ndarray (B, N, ...) or (B, F) or None — zero-padded for missing
         "target"      : float32 ndarray (B,)    NaN where target is unknown
         "modalities"  : list[set[str]]           length B
 
@@ -624,7 +536,7 @@ def collate_patients(samples: list[PatientSample]) -> dict[str, Any]:
     img_present = [s.image for s in samples if s.image is not None]
     if img_present:
         max_n = max(a.shape[0] for a in img_present)
-        rest_dims = img_present[0].shape[1:]  # (C, H, W) or (feature_dim,)
+        rest_dims = img_present[0].shape[1:]  # (C, H, W) for tiles, () for 1D vectors
         image = np.zeros((len(samples), max_n, *rest_dims), dtype=np.float32)
         for i, s in enumerate(samples):
             if s.image is not None:
@@ -715,7 +627,6 @@ def build_dataloaders(
     mod_cfg = cfg.get("modalities") or DotDict({})
 
     data_root = Path(ds_cfg.get("data_root", "data"))
-    manifest_tsv = data_root / ds_cfg.get("manifest_tsv", "gdc_manifest.tsv")
     tabular_file = data_root / ds_cfg.get("tabular_file", "clinical.csv")
     images_dir = data_root / ds_cfg.get("images_dir", "images")
     features_dir = data_root / ds_cfg.get("features_dir", "features")
@@ -748,7 +659,6 @@ def build_dataloaders(
             patch_size=patch_size,
             max_patches=max_patches,
             image_size=image_size,
-            manifest_path=manifest_tsv,
         )
 
     # -- Intersection of all known patient IDs (Strict Multimodal) --
@@ -757,12 +667,6 @@ def build_dataloaders(
     img_ids = set()
     if slide_store:
         img_ids = set(slide_store.patient_ids)
-        if not preextracted and not img_ids and images_dir.exists():
-            img_ids = {
-                p.name
-                for p in images_dir.iterdir()
-                if p.is_dir() and any(p.glob("*.png"))
-            }
 
     if use_tabular and use_image:
         all_ids = tabular_ids.intersection(img_ids)
@@ -784,13 +688,14 @@ def build_dataloaders(
 
     if split_file and Path(split_file).exists():
         log.info(f"Loading deterministic patient splits from {split_file}")
-        splits_df = pd.read_csv(str(split_file))
+        splits_df: pd.DataFrame = pd.read_csv(str(split_file))
 
         # --- NEW: Missing Data Warning Logic ---
-        master_ids = set(splits_df[id_col])
-        missing_ids = master_ids - all_ids
+        master_ids: set[str] = {str(pid) for pid in splits_df[id_col].dropna().tolist()}
+        all_ids_str: set[str] = {str(pid) for pid in all_ids}
+        missing_ids: set[str] = master_ids.difference(all_ids_str)
 
-        if missing_ids:
+        if len(missing_ids) > 0:
             log.warning(
                 f"⚠️ MISSING DATA WARNING: {len(missing_ids)} patients from the master "
                 f"split file are missing required modalities and were EXCLUDED."
