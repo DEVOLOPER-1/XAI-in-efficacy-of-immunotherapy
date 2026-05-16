@@ -394,7 +394,9 @@ class SlideStore:
             tile = tile.astype(np.float32) / 255.0
             tile = _resize_hwc(tile, self._image_size)
             tile = (tile - self._MEAN) / self._STD
-            tile_arr = cast(np.ndarray, tile).transpose(2, 0, 1).astype(np.float32, copy=False)
+            tile_arr = (
+                cast(np.ndarray, tile).transpose(2, 0, 1).astype(np.float32, copy=False)
+            )
             tiles.append(tile_arr)
 
         return np.stack(tiles, axis=0) if tiles else None

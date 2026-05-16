@@ -146,12 +146,12 @@ def run_explainability(
         or "experiment"
     )
 
-    output_dir = Path(
-        output_dir
-        or exp_cfg.get("output_dir")
-        or Path(training_cfg.get("save_dir", "logs/runs/checkpoints"))
-        / f"{experiment_name}_explainability"
+    # Build a per-run output directory: <save_dir>/<run_name>/xai/
+    # This keeps every experiment's XAI artefacts in its own folder.
+    _base_output = Path(
+        exp_cfg.get("output_dir") or Path(f"explainability_outputs/{experiment_name}"),
     )
+    output_dir = _base_output
     output_dir.mkdir(parents=True, exist_ok=True)
 
     report = ExplainabilityReport(
@@ -236,12 +236,15 @@ def predict(
 ) -> Path:
     """Compatibility wrapper that writes a CSV explanation manifest.
 
-    The old tracker-style API expected a CSV path. We keep that contract by
-    writing a flat artefact summary table to the requested path.
+    XAI artefacts are placed under logs/xai/<run_name>/.
+    The submission CSV is written to *output_path* as requested.
     """
     output_path = Path(output_path)
-    report = run_explainability(cfg, split=split, output_dir=output_path.parent)
+    # Let run_explainability choose its own organised output dir (per run_name).
+    # We only pass output_dir=None so the per-experiment folder is used.
+    report = run_explainability(cfg, split=split, output_dir=None)
     _write_report_csv(report, output_path)
+    log.info("XAI artefacts saved under: %s", report.output_dir)
     return output_path
 
 
@@ -709,12 +712,26 @@ def _raw_image_shap_plot(
         return None
 
     try:
-        background_tensor = torch.from_numpy(background).float()
-        explain_tensor = torch.from_numpy(explain_tiles).float()
-        background_input: Any = background_tensor
-        explain_input: Any = explain_tensor
+        # ── SHAP GradientExplainer expects standard (B, C, H, W) 4-D tensors.
+        # Feeding 5-D bags causes it to return attributions in an undocumented
+        # shape. We pass 4-D tensors here and let the wrapper add unsqueeze(1)
+        # internally so the WSI model still receives (B, N_tiles, C, H, W).
+        #
+        # With 4-D input SHAP returns:
+        #   multi_output=True (B,1) output → list of 1 array of (N_ex, C, H, W)
+        # reducing to (H, W) is then unambiguous.
+        background_tensor = torch.from_numpy(background).float()  # (N_bg, C, H, W)
+        explain_tensor = torch.from_numpy(explain_tiles).float()  # (N_ex, C, H, W)
 
         class _ImageWrapper(torch.nn.Module):
+            """Adapter so GradientExplainer can call the WSI bag-of-tiles model.
+
+            GradientExplainer passes (B, C, H, W) tensors (standard image
+            format per its documentation). We add the N_tiles=1 bag dimension
+            before forwarding to the model and handle any edge cases where
+            SHAP passes a 3-D single sample.
+            """
+
             def __init__(
                 self, base_model: Any, fixed_tabular: np.ndarray | None
             ) -> None:
@@ -722,26 +739,43 @@ def _raw_image_shap_plot(
                 self.base_model = base_model
                 self.fixed_tabular = fixed_tabular
 
-            def forward(self, image: Any) -> Any:
-                if image.ndim == 4:
-                    image = image.unsqueeze(1)
+            def forward(self, image: Any) -> Any:  # type: ignore[override]
+                # Ensure at least 4-D (B, C, H, W) then add N_tiles dim.
+                if image.ndim == 3:  # single CHW sample from SHAP
+                    image = image.unsqueeze(0)  # → (1, C, H, W)
+                # image is now (B, C, H, W); model needs (B, N_tiles, C, H, W)
+                image = image.unsqueeze(1)  # → (B, 1, C, H, W)
+
                 tab = None
                 if self.fixed_tabular is not None:
                     tab = torch.from_numpy(self.fixed_tabular).float().to(image.device)
                     tab = tab.expand(image.size(0), -1)
-                return self.base_model(image, tab).reshape(-1)
+                out = self.base_model(image, tab)
+                # GradientExplainer requires 2-D output (B, n_outputs)
+                # for its internal `outputs[:, idx]` indexing.
+                return out.reshape(-1, 1)  # (B, 1)
 
         wrapper = _ImageWrapper(model, reference_tabular)
         wrapper.eval()
-        explainer = shap.GradientExplainer(wrapper, background_input)
-        shap_values = explainer.shap_values(explain_input)
-        values = as_numpy(shap_values)
-        if isinstance(values, list):
-            values = values[0]
 
-        # Save a single representative heatmap.
-        heatmap = np.mean(np.abs(values[0]), axis=0)
-        display = _to_display_tile(explain_tiles[0])
+        # With 4-D input and (B,1) output:
+        #   shap_values → list of 1 array, each shaped (N_ex, C, H, W)
+        explainer = shap.GradientExplainer(wrapper, background_tensor)
+        shap_values = explainer.shap_values(explain_tensor)
+
+        # Unpack: GradientExplainer returns list[array] when multi_output=True,
+        # or a single array when multi_output=False.
+        # With 4-D input and (B,1) output → list of 1 array, each (N_ex,C,H,W).
+        if isinstance(shap_values, list):
+            sv = np.asarray(shap_values[0])  # (N_ex, C, H, W)
+        else:
+            sv = np.asarray(shap_values)  # (N_ex, C, H, W)
+
+        # First sample's per-pixel attribution magnitude, averaged over channels.
+        # sv[0] → (C, H, W) ; mean over C → (H, W)
+        heatmap = np.abs(sv[0]).mean(axis=0)  # (H, W) ✓
+
+        display = _to_display_tile(explain_tiles[0])  # (H, W, 3) display RGB
 
         fig, ax = plt.subplots(figsize=(6, 6))
         ax.imshow(display)
@@ -753,7 +787,7 @@ def _raw_image_shap_plot(
         plt.close(fig)
         return output_path
     except Exception as exc:  # pragma: no cover - best effort on optional deps
-        log.warning("Raw image SHAP failed: %s", exc)
+        log.warning("Raw image SHAP failed: %s", exc, exc_info=True)
         return None
 
 
@@ -858,16 +892,6 @@ def _raw_image_gradcam_plot(
 
             if "value" not in activations or "value" not in gradients:
                 return None
-
-            cam = (
-                gradients["value"].mean(dim=(2, 3), keepdim=True) * activations["value"]
-            )
-            cam = cam.mean(dim=1)[0].cpu().numpy()
-            cam = np.maximum(cam, 0)
-            if np.max(cam) > 0:
-                cam = cam / np.max(cam)
-            cam = plt.imshow  # silence type checker; replaced immediately below
-            del cam
 
             cam = (
                 gradients["value"].mean(dim=(2, 3), keepdim=True) * activations["value"]
@@ -1081,6 +1105,16 @@ def _load_model(cfg: DotDict) -> Any:
         or "experiment"
     )
 
+    # ── Priority 1: explicit checkpoint_path from CLI (--checkpoint flag) ──
+    explicit_path = training_cfg.get("checkpoint_path", None)
+    if explicit_path:
+        explicit_path = Path(explicit_path)
+        loaded = load_checkpoint(model, explicit_path)
+        model = loaded if loaded is not None else model
+        log.info("Loaded explicit checkpoint: %s", explicit_path)
+        return model
+
+    # ── Priority 2: auto-discover by experiment name ──────────────────────
     candidates = [
         save_dir / f"{experiment_name}_weights.pth",
         save_dir / f"{experiment_name}_weights.pkl",
@@ -1096,9 +1130,20 @@ def _load_model(cfg: DotDict) -> Any:
         log.info("Loaded checkpoint for explainability: %s", path)
         break
     else:
-        log.warning(
-            "No checkpoint found; explainability will use the current model weights."
-        )
+        available = sorted(save_dir.glob("*.pth")) + sorted(save_dir.glob("*.pkl"))
+        if available:
+            log.warning(
+                "No checkpoint matched '%s' in %s. "
+                "Available checkpoints (pass one via --checkpoint):\n  %s",
+                experiment_name,
+                save_dir,
+                "\n  ".join(str(p) for p in available),
+            )
+        else:
+            log.warning(
+                "No checkpoint found in %s; explainability will use uninitialised weights.",
+                save_dir,
+            )
 
     return model
 

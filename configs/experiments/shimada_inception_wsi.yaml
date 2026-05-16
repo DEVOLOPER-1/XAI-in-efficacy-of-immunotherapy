@@ -9,7 +9,7 @@
 #   - Colorectal cancer (TCGA COAD) ← our cohort matches
 #   - LR ~1e-4 with AdamW, standard for InceptionV3 transfer learning
 #   - Differential LR: backbone 10× lower than head (standard fine-tuning practice)
-#   - Gradient checkpointing to fit unfrozen InceptionV3 in 11.6GB VRAM
+#   - Gradient checkpointing to fit unfrozen InceptionV3
 
 experiment_name: shimada2021_inception_wsi_replication
 

@@ -239,10 +239,14 @@ def _train_neural(
     # preserve ImageNet weights), head gets the full lr (random init needs more signal).
     # Falls back to single LR for models that don't expose get_param_groups().
     backbone_lr_factor_raw = training_cfg.get("backbone_lr_factor", None)
-    backbone_lr_factor = float(backbone_lr_factor_raw) if backbone_lr_factor_raw is not None else None
+    backbone_lr_factor = (
+        float(backbone_lr_factor_raw) if backbone_lr_factor_raw is not None else None
+    )
 
     if backbone_lr_factor is not None and hasattr(model, "get_param_groups"):
-        param_groups = model.get_param_groups(head_lr=lr, backbone_lr_factor=backbone_lr_factor)
+        param_groups = model.get_param_groups(
+            head_lr=lr, backbone_lr_factor=backbone_lr_factor
+        )
         log.info(
             "Differential LR — backbone: %.2e | head: %.2e",
             lr * backbone_lr_factor,
@@ -275,7 +279,8 @@ def _train_neural(
         )
         log.info(
             "LR scheduler: ReduceLROnPlateau (patience=%d, factor=%.2f)",
-            sched_patience, sched_factor,
+            sched_patience,
+            sched_factor,
         )
 
     # ── AMP (Automatic Mixed Precision) ────────────────────────────────────

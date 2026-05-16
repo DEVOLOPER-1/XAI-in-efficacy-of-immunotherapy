@@ -1,22 +1,61 @@
 #!/usr/bin/env python3
 """
-main.py — Top-level CLI entry point for AIC-4 Zerone tracker.
+main.py — Top-level CLI entry point for the WhiteBox multimodal cancer XAI pipeline.
 
-Usage examples:
-    # Train
-    python main.py --config configs/experiments/random_forest.yaml --mode train
+Modes
+─────
+  train    Train a model defined by the experiment YAML config.
+  eval     Run the explainability audit on a data split and print a summary.
+  predict  Generate XAI artefacts for a split and write a submission CSV.
+  info     Print the fully-resolved merged config and registered models, then exit.
 
-    # Run explainability audit on validation split
-    python main.py --config configs/experiments/random_forest.yaml --mode eval
+Usage examples
+──────────────
+  # Train the Shimada InceptionV3 WSI model
+  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode train
 
-    # Export an explainability manifest for a chosen split
-    python main.py --config configs/experiments/random_forest.yaml --mode predict \
-                   --output submission.csv
+  # Explainability audit on the validation split
+  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode eval --split val
 
-    # Quick check — print the resolved config and registered models, then exit
-    python main.py --config configs/experiments/random_forest.yaml --mode info
+  # Generate XAI artefacts for the test split and write submission CSV
+  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode predict \\
+                 --output submission.csv
 
-Registered as a console script in pyproject.toml:
+  # Same as above but use a specific epoch checkpoint instead of auto-discovery
+  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode predict \\
+                 --checkpoint logs/runs/checkpoints/shimada2021_replication_e2e_finetune_batch32_weights.pth \\
+                 --output submission.csv
+
+  # 'public_lb' is a supported alias for the held-out test split
+  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode predict \\
+                 --split public_lb --output submission.csv
+
+  # Print the resolved config and all registered model types
+  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode info
+
+Output layout (predict / eval)
+──────────────────────────────
+  XAI artefacts are written to a per-run folder keyed by wandb run_name:
+      <explainability_outputs>/<experiment_name>/
+          image/raw/image_shap.png
+          image/raw/image_lime.png
+          image/raw/image_gradcam.png
+          image/raw/image_effects.png
+          report.json
+  The submission CSV is written to --output (default: submission.csv).
+
+Split aliases (predict mode)
+─────────────────────────────
+  'public_lb', 'lb', 'holdout'  →  mapped to 'test' automatically.
+
+Checkpoint resolution (predict / eval)
+────────────────────────────────────────
+  Priority 1 — explicit --checkpoint PATH (overrides everything)
+  Priority 2 — auto-discovery: <save_dir>/<experiment_name>_weights.pth / _best.pth
+  If no checkpoint is found, the warning lists all available .pth / .pkl files
+  in save_dir so you can pick one with --checkpoint.
+
+Registered as console scripts in pyproject.toml:
     train-tracker = "main:_train_entry"
     eval-tracker  = "main:_eval_entry"
 """
@@ -48,7 +87,11 @@ def _setup_logging(level: str = "INFO") -> None:
 
 
 def _mode_train(cfg_path: str, args: argparse.Namespace) -> None:
-    """Train a tracker using the given experiment config."""
+    """Train a model using the given experiment config.
+
+    Calls src.train.train(cfg) which handles the full training loop,
+    checkpointing, W&B logging, and returns final validation scores.
+    """
     from src.config import load_config
     from src.train import train
 
@@ -72,7 +115,12 @@ def _mode_train(cfg_path: str, args: argparse.Namespace) -> None:
 
 
 def _mode_eval(cfg_path: str, args: argparse.Namespace) -> None:
-    """Run the explainability audit on a named split."""
+    """Run the explainability pipeline on a named split and print a numeric summary.
+
+    Delegates to src.inference.evaluate which calls run_explainability and
+    returns the artefact count / modality breakdown as a float dict.
+    Default split: 'val'.
+    """
     from src.config import load_config
     from src.inference import evaluate
 
@@ -90,13 +138,41 @@ def _mode_eval(cfg_path: str, args: argparse.Namespace) -> None:
 
 
 def _mode_predict(cfg_path: str, args: argparse.Namespace) -> None:
-    """Export the explainability report manifest to a CSV file."""
+    """Run the explainability pipeline and export a submission CSV manifest.
+
+    Split resolution
+    ────────────────
+    The split defaults to 'test'. Legacy aliases 'public_lb', 'lb', and
+    'holdout' are silently mapped to 'test' so old invocations keep working.
+
+    Checkpoint override
+    ───────────────────
+    If --checkpoint is provided, its path is injected into cfg.training so
+    _load_model() in explainability.py picks it up before auto-discovery
+    (Priority 1 over the experiment-name-based search).
+
+    Output
+    ──────
+    XAI artefacts → <explainability_outputs>/<experiment_name>/
+    Submission CSV → --output path (default: submission.csv)
+    """
     from src.config import load_config
     from src.inference import predict
 
     cfg = load_config(cfg_path)
     output_path = args.output or "submission.csv"
-    split = args.split or "public_lb"
+
+    # 'public_lb' is a legacy alias for the held-out test split.
+    raw_split = args.split or "test"
+    _SPLIT_ALIASES = {"public_lb": "test", "lb": "test", "holdout": "test"}
+    split = _SPLIT_ALIASES.get(raw_split, raw_split)
+
+    # Inject explicit checkpoint into config so _load_model honours it
+    # (Priority 1 over auto-discovery by experiment name).
+    if getattr(args, "checkpoint", None):
+        training_cfg = cfg.get("training") or {}
+        training_cfg["checkpoint_path"] = args.checkpoint
+        cfg["training"] = training_cfg
 
     logging.getLogger(__name__).info(
         "Mode: PREDICT | Config: %s | Split: %s | Output: %s",
@@ -104,13 +180,21 @@ def _mode_predict(cfg_path: str, args: argparse.Namespace) -> None:
         split,
         output_path,
     )
+    if getattr(args, "checkpoint", None):
+        logging.getLogger(__name__).info(
+            "Using explicit checkpoint: %s", args.checkpoint
+        )
     written = predict(cfg, split=split, output_path=output_path)
     print(f"\n  ✓ Submission written → {written}")
     print(f'  Submit with: make submit FILE={written} MSG="{Path(cfg_path).stem}"\n')
 
 
 def _mode_info(cfg_path: str, _args: argparse.Namespace) -> None:
-    """Print the resolved merged config and the list of registered models."""
+    """Print the fully-resolved merged config and all registered model types.
+
+    Useful for verifying that YAML inheritance / overrides are applied
+    correctly before kicking off a long training run.
+    """
     import json
 
     from src.config import load_config
@@ -137,10 +221,18 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python main.py --config configs/experiments/random_forest.yaml --mode train\n"
-            "  python main.py --config configs/experiments/random_forest.yaml  --mode eval  --split val\n"
-            "  python main.py --config configs/experiments/random_forest.yaml  --mode predict --output explanations.csv\n"
-            "  python main.py --config configs/experiments/random_forest.yaml  --mode info\n"
+            "  # Train\n"
+            "  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode train\n\n"
+            "  # Eval on validation split\n"
+            "  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode eval --split val\n\n"
+            "  # Predict with auto-discovered checkpoint (test split)\n"
+            "  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode predict --output submission.csv\n\n"
+            "  # Predict with a specific epoch checkpoint\n"
+            "  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode predict \\\n"
+            "                 --checkpoint logs/runs/checkpoints/shimada2021_replication_e2e_finetune_batch32_weights.pth \\\n"
+            "                 --output submission.csv\n\n"
+            "  # Inspect resolved config\n"
+            "  python main.py --config configs/experiments/shimada_inception_wsi.yaml --mode info\n"
         ),
     )
 
@@ -149,7 +241,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "-c",
         required=True,
         metavar="PATH",
-        help="Path to the experiment YAML config, e.g. configs/experiments/random_forest.yaml",
+        help="Path to the experiment YAML config, e.g. configs/experiments/shimada_inception_wsi.yaml",
     )
     parser.add_argument(
         "--mode",
@@ -164,8 +256,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Data split to use. "
-            "eval mode: 'val' or 'train' (default: val). "
-            "predict mode: 'public_lb' (default)."
+            "train / eval mode: 'train', 'val' (default: val). "
+            "predict mode: 'test' (default) — aliases 'public_lb', 'lb', 'holdout' also accepted."
         ),
     )
     parser.add_argument(
@@ -173,7 +265,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "-o",
         metavar="FILE",
         default=None,
-        help="Output path for submission CSV (predict mode only, default: submission.csv)",
+        help="Destination path for the submission CSV (predict mode only; default: submission.csv)",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Explicit path to a model checkpoint (.pth / .pkl). "
+            "Takes priority over the auto-discovered checkpoint in predict / eval modes. "
+            "Example: logs/runs/checkpoints/shimada2021_replication_e2e_finetune_batch32_weights.pth"
+        ),
     )
     parser.add_argument(
         "--log-level",
