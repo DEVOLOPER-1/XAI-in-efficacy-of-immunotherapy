@@ -5,9 +5,9 @@ experiment_name: shimada2021_inception_swi
 
 # ── Modality configuration ─────────────────────────────────────────────────
 modalities:
-  image: true
-  tabular: false   # Set to true only for fusion experiments
-
+  tabular: false
+  image:   true
+  modality: image  # for the dashboard categories
 # ── Dataset configuration ──────────────────────────────────────────────────
 dataset:
   # Paths (relative to data_root)
@@ -49,7 +49,8 @@ model:
   
   # Backbone settings
   freeze_backbone: true                 # Start frozen; unfreeze later for fine-tuning
-  
+  tile_chunk_size: 16                   # Process at most this many tiles per CNN forward pass
+
   # Target scaling (CRITICAL for stable regression training)
   # ⚠️ Estimate these from your training set AFTER any log1p transform:
   target_scale: false

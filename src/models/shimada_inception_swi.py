@@ -50,10 +50,12 @@ class ShimadaInceptionWSI(_TorchBase):
                 dropout_rate: float = 0.5,
                 mode: str = "regression",
                 freeze: bool = True,
+                tile_chunk_size: int = 32,
             ):
                 super().__init__()
                 self.freeze_backbone = freeze
                 self.mode = mode
+                self.tile_chunk_size = max(1, int(tile_chunk_size))
 
                 # ── InceptionV3 backbone ─────────────────────────────────────
                 # torchvision requires aux_logits=True when loading pretrained weights
@@ -94,6 +96,29 @@ class ShimadaInceptionWSI(_TorchBase):
                         nn.Linear(512, 1),
                         # No activation: output is unbounded for regression
                     )
+
+            def train(self, mode: bool = True):
+                super().train(mode)
+                if self.freeze_backbone:
+                    self.cnn.eval()
+                return self
+
+            def _encode_tiles(self, tiles: torch.Tensor) -> torch.Tensor:
+                """Encode tiles in smaller chunks to avoid GPU OOM on large bags."""
+                if tiles.numel() == 0:
+                    return tiles.new_zeros((0, 2048))
+
+                features: list[torch.Tensor] = []
+                for start in range(0, tiles.shape[0], self.tile_chunk_size):
+                    chunk = tiles[start : start + self.tile_chunk_size]
+                    if self.freeze_backbone:
+                        with torch.no_grad():
+                            feats = self.cnn(chunk)
+                    else:
+                        feats = self.cnn(chunk)
+                    features.append(feats)
+
+                return torch.cat(features, dim=0)
 
             def _compute_valid_mask(self, patches: torch.Tensor) -> torch.Tensor:
                 """
@@ -139,14 +164,9 @@ class ShimadaInceptionWSI(_TorchBase):
                 # ── Tile-level feature extraction ───────────────────────────
                 # Reshape to (B*N, C, H, W) for batched CNN inference
                 tiles = image.view(B * N, C, H, W)
-                
-                if self.freeze_backbone:
-                    # No grad + eval mode for frozen backbone
-                    with torch.no_grad():
-                        tile_features = self.cnn(tiles)  # (B*N, 2048)
-                else:
-                    tile_features = self.cnn(tiles)  # (B*N, 2048)
-                
+
+                tile_features = self._encode_tiles(tiles)  # (B*N, 2048)
+
                 # Reshape back to (B, N, 2048)
                 tile_features = tile_features.view(B, N, -1)
                 
@@ -179,5 +199,11 @@ class ShimadaInceptionWSI(_TorchBase):
         mode = model_cfg.get("task_mode", "regression")
         dropout = float(model_cfg.get("dropout", 0.5))
         freeze = bool(model_cfg.get("freeze_backbone", True))
-        
-        return InnerInception(dropout_rate=dropout, mode=mode, freeze=freeze)
+        tile_chunk_size = int(model_cfg.get("tile_chunk_size", 32))
+
+        return InnerInception(
+            dropout_rate=dropout,
+            mode=mode,
+            freeze=freeze,
+            tile_chunk_size=tile_chunk_size,
+        )

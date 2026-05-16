@@ -43,9 +43,10 @@ def _init_wandb(cfg: DotDict) -> Any:
     
     wandb_cfg = cfg.get("wandb") or DotDict({})
     model_cfg = cfg.get("model") or DotDict({})
-    
+    project_name = wandb_cfg.get("project") or wandb_cfg.get("project_name", "TMB-prediction")
+
     run = wandb.init(
-        project=wandb_cfg.get("project", "TMB-prediction"),
+        project=project_name,
         entity=wandb_cfg.get("entity", "mohamed-mourad-zewail-city"),
         name=wandb_cfg.get("run_name", f"{datetime.now()}-{model_cfg.get('type', 'model')}"),
         tags=wandb_cfg.get("tags", []) + ["success"],
@@ -116,36 +117,48 @@ def train(cfg: DotDict) -> dict[str, float]:
 # ───────────────────────────────────────────────────────────────────────────
 # Helper: Target scaling/unscaling (for regression stability)
 # ───────────────────────────────────────────────────────────────────────────
-def _scale_targets(
-    targets: torch.Tensor,
+def _transform_regression_values(
+    values: torch.Tensor,
     cfg: DotDict,
     inverse: bool = False,
 ) -> torch.Tensor:
     """
-    Scale/unscale regression targets using config stats for stable training.
-    
+    Transform/untransform regression values using config stats for stable training.
+
     Args:
-        targets: (B,) tensor of raw target values
-        cfg: experiment config with model.target_mean/std
-        inverse: if True, unscale (model output → original scale)
+        values: (B,) tensor of raw regression values
+        cfg: experiment config with model.target_mean/std and dataset.log1p_target
+        inverse: if True, reverse the transform (loss-space → original scale)
     Returns:
-        scaled or unscaled targets
+        transformed or untransformed values
     """
+    ds_cfg = cfg.get("dataset") or DotDict({})
     model_cfg = cfg.get("model") or DotDict({})
-    if not model_cfg.get("target_scale", False):
-        return targets
-    
+    log1p_target = bool(ds_cfg.get("log1p_target", False))
+    target_scale = bool(model_cfg.get("target_scale", False))
     mean = float(model_cfg.get("target_mean", 0.0))
     std = float(model_cfg.get("target_std", 1.0))
     
-    # Guard against division by zero or near-zero std
-    if std < 1e-6:
-        log.warning("target_std=%.6f is too small; skipping scaling.", std)
-        return targets
-    
     if inverse:
-        return targets * std + mean
-    return (targets - mean) / std
+        if target_scale:
+            if std < 1e-6:
+                log.warning("target_std=%.6f is too small; skipping unscaling.", std)
+            else:
+                values = values * std + mean
+        if log1p_target:
+            values = torch.expm1(values).clamp(min=0.0)
+        return values
+
+    if log1p_target:
+        values = torch.log1p(values.clamp(min=0.0))
+
+    if target_scale:
+        if std < 1e-6:
+            log.warning("target_std=%.6f is too small; skipping scaling.", std)
+            return values
+        values = (values - mean) / std
+
+    return values
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -282,10 +295,11 @@ def _train_neural(
                 continue
 
             # ── Scale targets for stable loss computation ─────────────────
-            scaled_target = _scale_targets(target, cfg)
+            transformed_target = _transform_regression_values(target, cfg)
+            transformed_preds = _transform_regression_values(preds, cfg)
 
             # ── Loss on valid, scaled targets ─────────────────────────────
-            loss = criterion(preds[valid], scaled_target[valid])
+            loss = criterion(transformed_preds[valid], transformed_target[valid])
 
             # ── Guard against NaN/Inf loss ────────────────────────────────
             if not torch.isfinite(loss):
@@ -385,12 +399,8 @@ def _neural_validate(
             except Exception:
                 continue  # Skip problematic batches
 
-            # ── Unscale predictions before metric computation ─────────────
-            preds_tensor = torch.from_numpy(preds)
-            unscaled_preds = _scale_targets(preds_tensor, cfg, inverse=True).numpy()
-
             # ── Collect finite predictions/targets ────────────────────────
-            for p, t in zip(unscaled_preds, np.asarray(targets)):
+            for p, t in zip(np.asarray(preds), np.asarray(targets)):
                 if np.isfinite(p) and np.isfinite(t):
                     all_preds.append(float(p))
                     all_targets.append(float(t))
