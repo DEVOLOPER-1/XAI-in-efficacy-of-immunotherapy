@@ -92,4 +92,20 @@ class GoogLeNetWSI(_TorchBase):
                 return self.head(slide_embedding).squeeze(-1)
 
         droprate = cfg.model.get("dropout", 0.0)
-        return InnerGoogLeNet(dropout_rate=droprate)
+        model = InnerGoogLeNet(dropout_rate=droprate)
+        if cfg.model.get("start_weights_file", None) is not None:
+            model.load_state_dict(
+                torch.load(cfg.model.start_weights_file, map_location="gpu" if torch.cuda.is_available() else "cpu")
+            )
+        # Unfreeze the top two inception blocks
+        for param in model.cnn.inception5a.parameters():
+            param.requires_grad = True
+        for param in model.cnn.inception5b.parameters():
+            param.requires_grad = True
+
+        # Ensure the Attention and Regression heads remain unfrozen
+        for param in model.attention.parameters():
+            param.requires_grad = True
+        for param in model.head.parameters():
+            param.requires_grad = True
+        return model
