@@ -1,0 +1,71 @@
+experiment_name: WSI_GoogleNet_finetuning
+
+# ── Modality configuration ─────────────────────────────────────────────────
+modalities:
+  tabular: false
+  image:   true
+  modality: image  # for the dashboard categories
+# ── Dataset configuration ──────────────────────────────────────────────────
+dataset:
+  # Paths (relative to data_root)
+  data_root: "/media/maro/Mom0-0/Datasets/TCGA/pathological"
+  tabular_file: "coad_tmb.parquet"          # Only used if modalities.tabular=true
+  images_dir: "images"
+  features_dir: "features"
+
+  # Target & identifiers
+  target_col: "TMB_NONSYNONYMOUS"       # Continuous TMB value
+  patient_id_col: "PATIENT_ID"
+
+  # Image/patch settings
+  use_preextracted: false                # true loads 1D numpy feature vectors from features/<PATIENT_ID>.npy vs false loads tile PNGs from images/<PATIENT_ID>/
+  patch_size: 512                       # Original tile size (if tiling)
+  max_patches: 16                       # Max tiles per slide (zero-padded if fewer)
+  image_size: 224                       # Resize to InceptionV3's native resolution
+
+  # Splitting
+  patients_split_file: "data/master_patient_splits.csv"
+  seed: 42
+
+  # Batching
+  batch_size: 4
+
+  # Target transformation (for regression stability)
+  log1p_target: false
+
+# ── Model configuration ────────────────────────────────────────────────────
+model:
+  category: "image_only"                # Options: tabular_only | image_only | fusion
+  type: "google_net"             # Registered in src/models/__init__.py
+
+  # Task settings
+  task_mode: "regression"               # "regression" for continuous TMB, "classification" for TMB-H binary
+  dropout: 0.3                          # Dropout rate in task head
+
+  target_scale: false
+
+
+# ── Training hyperparameters ───────────────────────────────────────────────
+training:
+  epochs: 100
+  val_every: 1                          # Validate and log every N epochs
+
+  # Optimisation
+  lr: 1e-4                              # Lower LR for pretrained backbone fine-tuning
+  weight_decay: 1e-4                    # L2 regularisation
+#  grad_clip: 1.0                        # Max gradient norm (prevents explosion)
+
+  # Checkpointing
+  save_dir: "logs/runs/checkpoints"
+  upload_pickled_model: false           # Set true to upload weights to W&B
+
+  # Risk stratification (optional, for classification mode)
+  risk_threshold: 10                  # TMB cutoff for TMB-H classification
+
+# ── Weights & Biases configuration ─────────────────────────────────────────
+wandb:
+  run_name: "Gnet-btch:4-lr:1e-4"
+  tags:
+    - images_only
+    - inception_cnn
+    - pathological_only
