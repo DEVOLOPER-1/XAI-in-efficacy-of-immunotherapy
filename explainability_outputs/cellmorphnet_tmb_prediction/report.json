@@ -1,0 +1,73 @@
+{
+  "split": "test",
+  "output_dir": "explainability_outputs/cellmorphnet_tmb_prediction",
+  "experiment_name": "cellmorphnet_tmb_prediction",
+  "model_type": "cellmorphnet",
+  "summary": {
+    "artifacts_total": 4.0,
+    "patients_covered": 1.0,
+    "modality_image": 4.0,
+    "method_shap": 1.0,
+    "method_lime": 1.0,
+    "method_gradcam": 1.0,
+    "method_pdp_ice_ace": 1.0
+  },
+  "artifacts": [
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "image",
+      "method": "shap",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_shap.png",
+      "note": "Raw-image gradient SHAP",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "image",
+      "method": "lime",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_lime.png",
+      "note": "Raw-image local explanation",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "image",
+      "method": "gradcam",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_gradcam.png",
+      "note": "Raw-image gradient CAM",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "image",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_effects.png",
+      "note": "Image perturbation curves",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    }
+  ]
+}
