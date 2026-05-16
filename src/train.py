@@ -284,7 +284,7 @@ def _train_neural(
                 if preds is None:
                     log.warning("Model returned None — skipping batch.")
                     continue
-                preds = preds.squeeze(-1)  # Ensure shape (B,)
+                preds = preds.view(-1)  # Always 1D (B,), safe for batch_size=1
             except Exception as e:
                 log.warning("Forward pass failed: %s — skipping batch.", e)
                 continue
@@ -395,7 +395,7 @@ def _neural_validate(
 
             # ── Forward pass ──────────────────────────────────────────────
             try:
-                preds = model(image, tabular).squeeze(-1).cpu().numpy()
+                preds = model(image, tabular).view(-1).cpu().numpy()
             except Exception:
                 continue  # Skip problematic batches
 
