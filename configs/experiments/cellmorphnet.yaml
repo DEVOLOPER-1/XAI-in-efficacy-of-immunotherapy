@@ -1,0 +1,56 @@
+experiment_name: cellmorphnet_tmb_prediction
+
+# ── Modality Configuration ─────────────────────────────────────────────────
+modalities:
+  image: true
+  tabular: false
+
+# ── Dataset Configuration ──────────────────────────────────────────────────
+dataset:
+  target_col: "TMB_NONSYNONYMOUS"
+  # Memory budget for X GB GPU with local-window attention:
+  #   batch_size=4 slides × max_patches=8 tiles = 32 simultaneous tiles
+  #   Each tile: (3, 224, 224) → Stage-1 map (56×56×64) with 7×7 windows → safe
+  max_patches: 8            # Tiles sampled per slide (paper uses random subset)
+  image_size: 224           # Standard 224×224 patch size (20× magnification)
+  batch_size: 24             # Slides per batch — increase to X if VRAM allows
+  val_ratio: 0.15
+  seed: 42
+
+# ── Model Configuration ────────────────────────────────────────────────────
+model:
+  category: "image_only"
+  type: "cellmorphnet"
+
+  task_mode: "regression"  # "classification" for binary TMB-H/L
+  dropout: 0.1             # Paper uses light dropout; reduced from 0.2 for stability
+  window_size: 7           # HCRA local window (divides 56, 28, 14 exactly)
+
+  # Backbone dims match paper exactly (Table I in Xu et al. 2024)
+  # embed_dims: [64, 128, 256, 512]
+  # depths:     [2, 2, 6, 2]
+  # num_heads:  [2, 4, 8, 16]
+
+  # Optimizer settings from paper (Lion optimizer approximated with AdamW)
+  learning_rate: 0.0001
+  epochs: 30
+
+# ── Training Hyperparameters ───────────────────────────────────────────────
+training:
+  epochs: 100
+  val_every: 5
+  lr: 0.0001
+  weight_decay: 1e-4
+  grad_clip: 1.0
+  save_dir: "logs/runs/checkpoints"
+
+# ── W&B Configuration ──────────────────────────────────────────────────────
+wandb:
+  run_name: "cellmorphnet_window_attn_100ep"
+  tags:
+    - cellmorphnet
+    - window_attention
+    - hcra
+    - deconvolution
+    - tmb_prediction
+    - xu2024
