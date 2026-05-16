@@ -9,7 +9,7 @@ Key Components:
 3. 4-Stage Pyramid Backbone: Hierarchical feature extraction with spatial downsampling.
 4. Task Heads: Supports both Classification (TMB-H/L) and Regression (TMB count).
 
-Memory budget (11 GB GPU, batch_size=4, max_patches=8, 224×224 tiles):
+Memory budget (X GB GPU, batch_size=4, max_patches=8, 224×224 tiles):
   - Tiles in one forward: 4 × 8 = 32
   - Stage-1 feature map: (32, 56, 56, 64)  window_size=7 → 64 windows × 49 tokens
   - Attention matrix (per head): 64 × 49 × 49 = 153 k floats  ← manageable
