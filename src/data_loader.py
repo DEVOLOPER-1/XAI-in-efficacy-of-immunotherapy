@@ -166,6 +166,10 @@ class TabularStore:
         # for col in raw.select_dtypes(include=["bool"]).columns:
         #     raw[col] = raw[col].astype(float)
 
+        # Select only numeric columns — string/categorical columns cannot be used
+        # as raw float features and would cause astype(float32) to crash.
+        # Any non-numeric columns must be encoded before reaching this point.
+        raw = raw.select_dtypes(include=[np.number, "bool"])
         self._features: pd.DataFrame = raw.astype(np.float32)
 
         log.info(
@@ -429,12 +433,16 @@ class MultimodalDataset:
         patient_ids: list[str],
         shuffle: bool = False,
         seed: int = 42,
+        target_store: "TabularStore | None" = None,
     ) -> None:
         self._tabular = tabular_store
         self._slides = slide_store
         self._ids = patient_ids
         self._shuffle = shuffle
         self._seed = seed
+        # target_store is used to fetch labels in image-only mode
+        # (when tabular features are disabled but labels still live in the CSV)
+        self._target_store = target_store
 
         log.info(
             "MultimodalDataset: %d patients | tabular=%s | image=%s",
@@ -458,6 +466,13 @@ class MultimodalDataset:
             target = self._tabular.get_target(pid)
             if tabular is not None:
                 modalities.add("tabular")
+
+        # -- Target fallback for image-only mode ------------------------------
+        # When tabular modality is disabled, labels still live in the CSV.
+        # Use target_store (a TabularStore loaded for labels only) so that
+        # image-only models receive valid targets instead of all-NaN.
+        if target is None and self._target_store is not None:
+            target = self._target_store.get_target(pid)
 
         # -- Image ------------------------------------------------------------
         image = None
@@ -646,10 +661,19 @@ def build_dataloaders(
 
     # -- Instantiate stores -------------------------------------------------
     tabular_store: TabularStore | None = None
+    target_store: TabularStore | None = None  # Always loaded for label lookup
     slide_store: SlideStore | None = None
 
     if use_tabular:
         tabular_store = TabularStore(tabular_file, id_col, target_col)
+        target_store = tabular_store  # reuse the same store
+    elif tabular_file.exists():
+        # Image-only mode: load CSV for target labels only (no features exposed)
+        log.info(
+            "Image-only mode: loading '%s' for target labels only (tabular features disabled).",
+            tabular_file.name,
+        )
+        target_store = TabularStore(tabular_file, id_col, target_col)
 
     if use_image:
         slide_store = SlideStore(
@@ -662,7 +686,9 @@ def build_dataloaders(
         )
 
     # -- Intersection of all known patient IDs (Strict Multimodal) --
-    tabular_ids = set(tabular_store.patient_ids) if tabular_store else set()
+    tabular_ids = set(tabular_store.patient_ids) if tabular_store else (
+        set(target_store.patient_ids) if target_store else set()
+    )
 
     img_ids = set()
     if slide_store:
@@ -743,9 +769,13 @@ def build_dataloaders(
 
     # -- Build Datasets and Loaders -----------------------------------
     train_ds = MultimodalDataset(
-        tabular_store, slide_store, train_ids, shuffle=True, seed=seed
+        tabular_store, slide_store, train_ids, shuffle=True, seed=seed,
+        target_store=target_store,
     )
-    val_ds = MultimodalDataset(tabular_store, slide_store, val_ids, shuffle=False)
+    val_ds = MultimodalDataset(
+        tabular_store, slide_store, val_ids, shuffle=False,
+        target_store=target_store,
+    )
 
     feature_names = tabular_store.feature_names if tabular_store else None
 
@@ -762,7 +792,10 @@ def build_dataloaders(
 
     test_loader = None
     if test_ids:
-        test_ds = MultimodalDataset(tabular_store, slide_store, test_ids, shuffle=False)
+        test_ds = MultimodalDataset(
+            tabular_store, slide_store, test_ids, shuffle=False,
+            target_store=target_store,
+        )
         test_loader = _BatchLoader(
             test_ds, batch_size=batch_size, shuffle=False, feature_names=feature_names
         )
