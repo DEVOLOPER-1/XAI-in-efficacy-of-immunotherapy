@@ -8,12 +8,13 @@ modalities:
 # ── Dataset Configuration ──────────────────────────────────────────────────
 dataset:
   target_col: "TMB_NONSYNONYMOUS"
-  # Memory budget for X GB GPU with local-window attention:
-  #   batch_size=4 slides × max_patches=8 tiles = 32 simultaneous tiles
-  #   Each tile: (3, 224, 224) → Stage-1 map (56×56×64) with 7×7 windows → safe
-  max_patches: 8            # Tiles sampled per slide (paper uses random subset)
+  # TMB is extremely heavy-tailed (median 3.17, max 433) → log1p stabilises gradients.
+  # Without this the loss is dominated by outliers and R² stays negative.
+  log1p_target: true        # Apply log1p(TMB) before computing loss
+  # Memory budget: batch_size=16 × max_patches=16 = 256 tiles per step
+  max_patches: 16           # Use all available tiles (most patients have exactly 16)
   image_size: 224           # Standard 224×224 patch size (20× magnification)
-  batch_size: 24             # Slides per batch — increase to X if VRAM allows
+  batch_size: 12            # Reduced to fit 16 tiles × 16 slides in VRAM
   val_ratio: 0.15
   seed: 42
 
@@ -33,7 +34,12 @@ model:
 
   # Optimizer settings from paper (Lion optimizer approximated with AdamW)
   learning_rate: 0.0001
-  epochs: 30
+  epochs: 100
+  # Target standardisation stats (log1p scale, computed from COAD train set)
+  # log1p(TMB): mean≈1.79, std≈1.09 — standardise so predictions start near 0
+  target_scale: true
+  target_mean: 1.79
+  target_std: 1.09
 
 # ── Training Hyperparameters ───────────────────────────────────────────────
 training:
@@ -43,10 +49,15 @@ training:
   weight_decay: 1e-4
   grad_clip: 1.0
   save_dir: "logs/runs/checkpoints"
+  # CosineAnnealingLR: decays lr from 1e-4 → 1e-6 over 100 epochs
+  # This prevents the flat plateau seen when lr stays fixed throughout
+  scheduler: "CosineAnnealing"
+  scheduler_T_max: 100      # Full cosine cycle = total epochs
+  scheduler_eta_min: 1.0e-6 # Minimum LR floor
 
 # ── W&B Configuration ──────────────────────────────────────────────────────
 wandb:
-  run_name: "cellmorphnet_window_attn_100ep"
+  run_name: "cellmorphnet_window_attn_100ep_annealing_log1p_target"
   tags:
     - cellmorphnet
     - window_attention
