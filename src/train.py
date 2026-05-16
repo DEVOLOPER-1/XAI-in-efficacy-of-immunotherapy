@@ -342,11 +342,15 @@ def _train_neural(
             # ── Forward pass (inside AMP autocast) ────────────────────────
             try:
                 with torch.amp.autocast("cuda", enabled=use_amp):
-                    preds = model(image, tabular)
-                if preds is None:
+                    raw_preds = model(image, tabular).view(-1)
+                if raw_preds is None:
                     log.warning("Model returned None — skipping batch.")
                     continue
-                preds = preds.float().view(-1)  # cast back to float32 before loss
+                raw_preds = raw_preds.float().view(-1)  # cast back to float32 before loss
+                # NEW: Unscale the log-predictions back to real-world TMB space!
+                preds = _transform_regression_values(raw_preds, cfg, inverse=True)
+                preds = preds.cpu().numpy()
+
             except Exception as e:
                 log.warning("Forward pass failed: %s — skipping batch.", e)
                 continue

@@ -51,21 +51,45 @@ class GoogLeNetWSI(_TorchBase):
     def _build_estimator(self, cfg: "DotDict") -> Any:
         # Define the inner PyTorch network
         class InnerGoogLeNet(nn.Module):
-            def __init__(self, dropout_rate):
+            def __init__(self, dropout_rate=0.3):
                 super().__init__()
+                # 1. Load pre-trained GoogLeNet
                 self.cnn = models.googlenet(weights=models.GoogLeNet_Weights.DEFAULT)
                 self.cnn.fc = nn.Identity()
-                self.regression_head = nn.Sequential(
-                    nn.Dropout(dropout_rate),
-                    nn.Linear(1024, 1)
+
+                # 2. FREEZE THE BACKBONE (Crucial for small medical datasets)
+                for param in self.cnn.parameters():
+                    param.requires_grad = False
+
+                # 3. Attention Gating Network (The ABMIL Head)
+                # GoogLeNet outputs 1024D. We map to a hidden 256D layer to score each patch.
+                self.attention = nn.Sequential(
+                    nn.Linear(1024, 256), nn.Tanh(), nn.Linear(256, 1)
                 )
 
-            def forward(self, image, tabular=None):
+                # 4. Final Regression Head
+                self.head = nn.Sequential(nn.Dropout(dropout_rate), nn.Linear(1024, 1))
+
+            def forward(
+                self, image, tabular=None
+            ):  # Added tabular=None for pipeline compatibility
                 B, N, C, H, W = image.shape
                 x = image.view(B * N, C, H, W)
-                features = self.cnn(x).view(B, N, -1)
-                slide_embedding = features.mean(dim=1)
-                return self.regression_head(slide_embedding)
+
+                # Extract features from frozen backbone
+                features = self.cnn(x)  # Shape: (B*N, 1024)
+
+                # Calculate Attention weights for each patch
+                A = self.attention(features)  # Shape: (B*N, 1)
+                A = A.view(B, N, 1)  # Reshape to (Batch, Patches, 1)
+                A = torch.softmax(A, dim=1)  # Normalize so the 16 weights sum to 1.0
+
+                features = features.view(B, N, -1)  # Shape: (B, N, 1024)
+
+                # Weighted Average: Multiply features by their attention scores
+                slide_embedding = torch.sum(features * A, dim=1)  # Shape: (B, 1024)
+
+                return self.head(slide_embedding).squeeze(-1)
 
         droprate = cfg.model.get("dropout", 0.0)
         return InnerGoogLeNet(dropout_rate=droprate)

@@ -24,28 +24,28 @@ model:
 
   # Regularisation — tune these to control overfitting.
   # Start shallow (max_depth 3–5) and increase only if underfitting.
-  n_estimators:        300
-  max_depth:          10       # null = fully grown tree (will overfit)
-  min_samples_split:  10      # a node must have >= 10 samples to be split
-  min_samples_leaf:   5       # each leaf must contain >= 5 samples
+  n_estimators:        500
+  max_depth:          null       # null = fully grown tree (will overfit)
+  min_samples_split:  40      # a node must have >= 10 samples to be split
+  min_samples_leaf:   30       # each leaf must contain >= 5 samples
 
   # Loss function for the split quality criterion.
   # squared_error: standard MSE — best default for survival regression.
   # absolute_error: more robust to outlier survival values.
   # friedman_mse:  weighted MSE with Friedman's improvement score.
-  criterion:    squared_error
+  criterion:    absolute_error
 
-  select_top_k: 20
+  select_top_k: 256
 
   random_state: 42
 
 # ── Dataset ─────────────────────────────────────────────────────────────────
 dataset:
   data_root:       data/processed
-  tabular_file:    stad_clinical_patient.parquet   # local artifact: generate with data/processing scripts
+  tabular_file:    coad_rna.parquet   # local artifact: generate with data/processing scripts
   target_col:      TMB   # regression target column
 
-  val_ratio:    0.2    # 15% of patients held out for validation
+  val_ratio:    0.15    # 15% of patients held out for validation
   seed:         42      # controls the deterministic train/val split
 #  batch_size:   512     not used for decision tree, but kept here for config completeness
 
@@ -61,12 +61,13 @@ training:
   # risk_threshold: binarise TMB at this value to compute AUROC/AUPRC.
   # Patients with TMB >= threshold → high-risk class (label 1).
   # Set to null to skip binary metrics.
-  risk_threshold:  3.84
+  risk_threshold:  10
 
 # ── Weights & Biases ────────────────────────────────────────────────────────
 wandb:
-  run_name: "random_forest_depth10_n300"
+  run_name: "random_forest_depth:inf_n:500_min_split:40_min_leaf:30_criterion:absolute_error"
   tags:
-    - tabular_only
+    - genetic_only
+    - COAD
     - random_forest
     - feature_selection
