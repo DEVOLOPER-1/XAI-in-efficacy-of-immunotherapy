@@ -339,16 +339,10 @@ class SlideStore:
         if not path.exists():
             return None
         arr = np.load(path).astype(np.float32)
-        if arr.ndim == 1:
-            return arr
 
-        if arr.ndim == 2:
-            log.warning(
-                "Patient %s: expected a 1D feature vector but found shape %s; using mean pooling.",
-                patient_id,
-                arr.shape,
-            )
-            return arr.mean(axis=0).astype(np.float32)
+        # Accept both 1D (patient-level) and 2D (patch-level) feature vectors
+        if arr.ndim in (1, 2):
+            return arr
 
         log.warning(
             "Patient %s: unexpected feature array shape %s; flattening to 1D.",

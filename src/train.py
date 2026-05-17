@@ -262,7 +262,7 @@ def _train_neural(
     )
     # delta=1.0 matches utils.py huber_loss(delta=1.0) so train_loss and val_huber
     # are directly comparable in the logs and W&B charts.
-    criterion = nn.HuberLoss(delta=1.0)
+    criterion = nn.HuberLoss(delta=training_cfg.get("huber_delta", 1.0))
 
     # ── LR Scheduler ──────────────────────────────────────────────────
     sched_name = training_cfg.get("scheduler", None)
