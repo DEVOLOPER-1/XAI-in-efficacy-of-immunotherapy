@@ -1,0 +1,9 @@
+patient_id,modality,method,path,note
+all_patients,tabular,shap,explainability_outputs/dnn_genetic_paper_architicture/tabular/tabular_shap_summary.png,Tabular SHAP summary (all eval patients)
+all_patients,tabular,pdp_ice_ace,explainability_outputs/dnn_genetic_paper_architicture/tabular/tabular_effects.png,PDP / ICE / ACE curves
+TCGA-5M-AAT4,tabular,shap_local,explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-5M-AAT4/tabular_shap_local.png,Tabular local SHAP explanation — TCGA-5M-AAT4
+TCGA-5M-AAT4,tabular,lime,explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-5M-AAT4/tabular_lime.png,Tabular local LIME explanation — TCGA-5M-AAT4
+TCGA-A6-2682,tabular,shap_local,explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2682/tabular_shap_local.png,Tabular local SHAP explanation — TCGA-A6-2682
+TCGA-A6-2682,tabular,lime,explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2682/tabular_lime.png,Tabular local LIME explanation — TCGA-A6-2682
+TCGA-A6-2684,tabular,shap_local,explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2684/tabular_shap_local.png,Tabular local SHAP explanation — TCGA-A6-2684
+TCGA-A6-2684,tabular,lime,explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2684/tabular_lime.png,Tabular local LIME explanation — TCGA-A6-2684

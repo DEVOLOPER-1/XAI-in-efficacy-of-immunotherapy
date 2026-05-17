@@ -1,0 +1,105 @@
+{
+  "split": "test",
+  "output_dir": "explainability_outputs/dnn_genetic_paper_architicture",
+  "experiment_name": "dnn_genetic_paper_architicture",
+  "model_type": "tabular_mlp",
+  "summary": {
+    "artifacts_total": 8.0,
+    "patients_covered": 4.0,
+    "modality_tabular": 8.0,
+    "method_shap": 1.0,
+    "method_pdp_ice_ace": 1.0,
+    "method_shap_local": 3.0,
+    "method_lime": 3.0,
+    "rmse": 16.53104424306714,
+    "mae": 8.732914413213729,
+    "huber": 8.262521916654718,
+    "r2": 0.4280910286074505,
+    "pearson_r": 0.6811565223713225,
+    "c_index": 0.35139573070607555,
+    "auroc": 0.9672619047619048,
+    "auprc": 0.7649173742923743
+  },
+  "artifacts": [
+    {
+      "patient_id": "all_patients",
+      "modality": "tabular",
+      "method": "shap",
+      "path": "explainability_outputs/dnn_genetic_paper_architicture/tabular/tabular_shap_summary.png",
+      "note": "Tabular SHAP summary (all eval patients)",
+      "metadata": {
+        "feature_count": 21
+      }
+    },
+    {
+      "patient_id": "all_patients",
+      "modality": "tabular",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/dnn_genetic_paper_architicture/tabular/tabular_effects.png",
+      "note": "PDP / ICE / ACE curves",
+      "metadata": {
+        "feature_count": 21
+      }
+    },
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "tabular",
+      "method": "shap_local",
+      "path": "explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-5M-AAT4/tabular_shap_local.png",
+      "note": "Tabular local SHAP explanation \u2014 TCGA-5M-AAT4",
+      "metadata": {
+        "feature_count": 21
+      }
+    },
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "tabular",
+      "method": "lime",
+      "path": "explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-5M-AAT4/tabular_lime.png",
+      "note": "Tabular local LIME explanation \u2014 TCGA-5M-AAT4",
+      "metadata": {
+        "feature_count": 21
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2682",
+      "modality": "tabular",
+      "method": "shap_local",
+      "path": "explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2682/tabular_shap_local.png",
+      "note": "Tabular local SHAP explanation \u2014 TCGA-A6-2682",
+      "metadata": {
+        "feature_count": 21
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2682",
+      "modality": "tabular",
+      "method": "lime",
+      "path": "explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2682/tabular_lime.png",
+      "note": "Tabular local LIME explanation \u2014 TCGA-A6-2682",
+      "metadata": {
+        "feature_count": 21
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2684",
+      "modality": "tabular",
+      "method": "shap_local",
+      "path": "explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2684/tabular_shap_local.png",
+      "note": "Tabular local SHAP explanation \u2014 TCGA-A6-2684",
+      "metadata": {
+        "feature_count": 21
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2684",
+      "modality": "tabular",
+      "method": "lime",
+      "path": "explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2684/tabular_lime.png",
+      "note": "Tabular local LIME explanation \u2014 TCGA-A6-2684",
+      "metadata": {
+        "feature_count": 21
+      }
+    }
+  ]
+}

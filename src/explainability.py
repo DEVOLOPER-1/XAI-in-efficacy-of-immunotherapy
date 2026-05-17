@@ -136,6 +136,43 @@ def run_explainability(
 
     model = _load_model(cfg)
 
+    # =================================================================
+    # NEW: Memory-Efficient Clinical Metrics Loop
+    # =================================================================
+    log.info("Computing clinical metrics on %s split...", split)
+    y_true, y_pred = [], []
+    device = _infer_device(model)
+    if hasattr(model, "eval"):
+        model.eval()
+
+    import torch
+    from src.utils import compute_all_metrics
+
+    with torch.no_grad():
+        for batch in selected_loader:
+            images_t = (
+                _to_torch(batch["image"], device)
+                if batch["image"] is not None
+                else None
+            )
+            if images_t is not None and images_t.ndim == 4:
+                images_t = images_t.unsqueeze(1)
+
+            tabs_t = (
+                _to_torch(batch["tabular"], device)
+                if batch["tabular"] is not None
+                else None
+            )
+
+            preds = model(images_t, tabs_t)
+            y_pred.extend(as_numpy(preds).flatten().tolist())
+            y_true.extend(batch["target"].tolist())
+
+    risk_threshold = float((cfg.get("training") or {}).get("risk_threshold", 10.0))
+    clinical_metrics = compute_all_metrics(y_true, y_pred, threshold=risk_threshold)
+    log.info("Clinical metrics computed.")
+    # =================================================================
+
     split_samples = _collect_samples(selected_loader)
     train_samples = _collect_samples(train_loader)
 
@@ -181,6 +218,7 @@ def run_explainability(
     )
 
     # Separate explainability instances for each modality.
+    # When calling the tabular branch, pass the feature names!
     if use_tabular and tabular_reference is not None:
         tabular_artifacts = _explain_tabular_branch(
             model=model,
@@ -192,6 +230,8 @@ def run_explainability(
             max_patients=max_patients,
             seed=seed,
             output_dir=output_dir / "tabular",
+            feature_names=selected_loader.feature_names,  # <-- PASS REAL NAMES
+            experiment_name=report.experiment_name,  # <-- NEW: Pass the experiment name
         )
         report.artifacts.extend(tabular_artifacts)
 
@@ -210,6 +250,7 @@ def run_explainability(
         report.artifacts.extend(image_artifacts)
 
     report.summary = _build_summary(report.artifacts)
+    report.summary.update(clinical_metrics)  # <-- MERGE HERE
 
     save_json(report.to_dict(), output_dir / "report.json")
     _write_report_csv(report, output_dir / "report.csv")
@@ -263,17 +304,21 @@ def _explain_tabular_branch(
     max_patients: int,
     seed: int,
     output_dir: Path,
+    feature_names: list[str] | None = None, # <-- NEW ARGUMENT
+    experiment_name: str = "Experiment", # <-- NEW: Add to signature
 ) -> list[ExplainabilityArtifact]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     background = _collect_tabular_matrix(train_samples, max_rows=background_size)
     if background.size == 0:
-        log.warning(
-            "No tabular training data available for explainability; skipping tabular branch."
-        )
+        log.warning("No tabular training data available; skipping tabular branch.")
         return []
 
-    feature_names = _infer_tabular_feature_names(split_samples)
+    # --- Use real names and translate them ---
+    if not feature_names:
+        feature_names = _infer_tabular_feature_names(split_samples)
+    else:
+        feature_names = _translate_gene_names(feature_names)
     artifacts: list[ExplainabilityArtifact] = []
 
     # ── Shared global explainers (summary / effect curves) ──────────────────
@@ -335,16 +380,47 @@ def _explain_tabular_branch(
         (s, s.tabular) for s in split_samples if s.tabular is not None
     ][:max_patients]
 
-    if "lime" in methods:
-        for patient_sample, patient_tabular in tabular_patients:
-            pid = patient_sample.patient_id
-            patient_dir = output_dir / pid
-            patient_dir.mkdir(parents=True, exist_ok=True)
-            patient_image = (
-                patient_sample.image
-                if patient_sample.image is not None
-                else reference_image
+    for patient_sample, patient_tabular in tabular_patients:
+        pid = patient_sample.patient_id
+        patient_dir = output_dir / pid
+        patient_dir.mkdir(parents=True, exist_ok=True)
+        patient_image = (
+            patient_sample.image
+            if patient_sample.image is not None
+            else reference_image
+        )
+        tmb_val = (
+            f"{patient_sample.target:.2f}"
+            if patient_sample.target is not None
+            else "Unknown"
+        )
+        plot_title = f"Exp: {experiment_name} | Patient: {pid} | True TMB: {tmb_val}"
+        # --- 1. LOCAL SHAP ---
+        if "shap" in methods:
+            path = _tabular_shap_local_plot(
+                model=model,
+                background=background,
+                explain_row=patient_tabular,
+                feature_names=feature_names,
+                reference_image=patient_image,
+                reference_tabular=patient_tabular,
+                output_path=patient_dir / "tabular_shap_local.png",
+                title=plot_title,  # <-- NEW: Pass title
             )
+            if path is not None:
+                artifacts.append(
+                    ExplainabilityArtifact(
+                        patient_id=pid,
+                        modality="tabular",
+                        method="shap_local",
+                        path=path,
+                        note=f"Tabular local SHAP explanation — {pid}",
+                        metadata={"feature_count": int(background.shape[1])},
+                    )
+                )
+
+        # --- 2. LOCAL LIME ---
+        if "lime" in methods:
             path = _tabular_lime_plot(
                 model=model,
                 background=background,
@@ -354,6 +430,7 @@ def _explain_tabular_branch(
                 reference_tabular=patient_tabular,
                 output_path=patient_dir / "tabular_lime.png",
                 seed=seed,
+                title=plot_title,  # <-- NEW: Pass title
             )
             if path is not None:
                 artifacts.append(
@@ -366,7 +443,6 @@ def _explain_tabular_branch(
                         metadata={"feature_count": int(background.shape[1])},
                     )
                 )
-
     log.info(
         "Tabular branch complete: %d artifacts, %d patients explained.",
         len(artifacts),
@@ -438,6 +514,59 @@ def _explain_image_branch(
 # Tabular explainers
 # ---------------------------------------------------------------------------
 
+def _tabular_shap_local_plot(
+    model: Any,
+    background: np.ndarray,
+    explain_row: np.ndarray,
+    feature_names: list[str],
+    reference_image: np.ndarray | None,
+    reference_tabular: np.ndarray | None,
+    output_path: Path,
+        title: str = "", # <-- NEW
+) -> Path | None:
+    """Generates a SHAP waterfall plot for a single patient."""
+    try:
+        import shap
+    except ImportError:
+        log.warning("shap is not installed; skipping local tabular SHAP.")
+        return None
+
+    try:
+        predict_fn = lambda x: _predict_with_model(
+            model,
+            image=_repeat_optional_image(reference_image, len(x)),
+            tabular=x,
+            reference_tabular=reference_tabular,
+        )
+
+        explainer = shap.Explainer(predict_fn, background)
+
+        # Dynamically set max_evals to avoid the "too low for Permutation" error
+        required_evals = 2 * len(feature_names) + 1
+        safe_evals = max(500, required_evals)
+
+        # explain_row is 1D, but explainer expects a 2D batch
+        explanation = explainer(explain_row.reshape(1, -1), max_evals=safe_evals)
+
+        # Inject feature names directly into the Explanation object for the waterfall plot
+        explanation.feature_names = feature_names
+
+        plt.figure(figsize=(10, 6))
+        # Plot the first (and only) instance in the batch
+        shap.plots.waterfall(
+            explanation[0], max_display=min(15, len(feature_names)), show=False
+        )
+
+        if title:
+            plt.gcf().suptitle(title, fontsize=13, y=1.02)
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        return output_path
+    except Exception as exc:
+        log.warning("Local Tabular SHAP failed: %s", exc)
+        return None
 
 def _tabular_shap_plot(
     model: Any,
@@ -463,7 +592,11 @@ def _tabular_shap_plot(
         )
 
         explainer = shap.Explainer(predict_fn, background)
-        explanation = explainer(explain_rows)
+
+        required_evals = 2 * len(feature_names) + 1
+        safe_evals = max(500, required_evals)
+
+        explanation = explainer(explain_rows, max_evals=safe_evals)
         values = np.asarray(getattr(explanation, "values", explanation))
 
         plt.figure(figsize=(10, 6))
@@ -492,6 +625,7 @@ def _tabular_lime_plot(
     reference_tabular: np.ndarray | None,
     output_path: Path,
     seed: int,
+    title: str = "", # <-- NEW
 ) -> Path | None:
     try:
         from lime import lime_tabular
@@ -521,6 +655,8 @@ def _tabular_lime_plot(
             num_features=min(len(feature_names), 12),
         )
         fig = exp.as_pyplot_figure()
+        if title:
+            fig.suptitle(title, fontsize=13, y=1.02)
         fig.tight_layout()
         fig.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
@@ -1405,12 +1541,16 @@ def _predict_with_model(
     reference_tabular: np.ndarray | None = None,
 ) -> np.ndarray:
     """Predict using either sklearn-style or torch-style models."""
-    # Fast path for classical tabular models.
-    if tabular is not None and hasattr(model, "predict") and image is None:
+    # THE FIX: Exclude PyTorch wrappers by ensuring the model does NOT have .parameters()
+    if (
+        tabular is not None
+        and hasattr(model, "predict")
+        and not hasattr(model, "parameters")
+        and image is None
+    ):
         return np.asarray(
             model.predict(np.asarray(tabular, dtype=np.float32)), dtype=np.float32
         ).reshape(-1)
-
     try:
         import torch
     except ImportError as exc:  # pragma: no cover - optional dependency
@@ -1557,3 +1697,48 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (np.integer, np.floating)):
         return value.item()
     return value
+
+# ---------------------------------------------------------------------------
+# Gene helper
+# ---------------------------------------------------------------------------
+
+
+def _translate_gene_names(feature_names: list[str]) -> list[str]:
+    """Safely translates Ensembl IDs to Gene Symbols if applicable."""
+    # Only run if features actually look like Ensembl IDs
+    if not any(isinstance(f, str) and f.startswith("ENSG") for f in feature_names):
+        return feature_names
+
+    try:
+        import mygene
+
+        mg = mygene.MyGeneInfo()
+        # Remove transcript version numbers (e.g., ENSG00000141510.16 -> ENSG00000141510)
+        clean_queries = [
+            f.split(".")[0] if isinstance(f, str) else f for f in feature_names
+        ]
+
+        res = mg.querymany(
+            clean_queries,
+            scopes="ensembl.gene",
+            fields="symbol",
+            species="human",
+            verbose=False,
+        )
+
+        symbol_map = {
+            r["query"]: r.get("symbol", r["query"]) for r in res if "query" in r
+        }
+        return [
+            symbol_map.get(clean, orig)
+            for orig, clean in zip(feature_names, clean_queries)
+        ]
+
+    except ImportError:
+        log.warning(
+            "mygene is not installed (pip install mygene). Showing raw Ensembl IDs."
+        )
+        return feature_names
+    except Exception as e:
+        log.warning("mygene translation failed: %s", e)
+        return feature_names
