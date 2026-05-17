@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 DEFAULT_METHODS = ("shap", "lime", "gradcam", "pdp", "ice", "ace")
 _IMAGE_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _IMAGE_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-
+MAX_PATIENTS = 3
 
 # ---------------------------------------------------------------------------
 # Public report objects
@@ -119,7 +119,7 @@ def run_explainability(
     methods_set = {
         m.lower().strip() for m in (methods or exp_cfg.get("methods", DEFAULT_METHODS))
     }
-    max_patients = int(max_patients or exp_cfg.get("max_patients", 3))
+    max_patients = int(max_patients or exp_cfg.get("max_patients", MAX_PATIENTS))
     background_size = int(exp_cfg.get("background_size", 32))
     seed = int(exp_cfg.get("seed", cfg.get("dataset", DotDict({})).get("seed", 42)))
 
@@ -267,69 +267,49 @@ def _explain_tabular_branch(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     background = _collect_tabular_matrix(train_samples, max_rows=background_size)
-    eval_rows = _collect_tabular_matrix(split_samples, max_rows=max_patients)
-    if background.size == 0 or eval_rows.size == 0:
+    if background.size == 0:
         log.warning(
-            "No tabular data available for explainability; skipping tabular branch."
+            "No tabular training data available for explainability; skipping tabular branch."
         )
         return []
 
     feature_names = _infer_tabular_feature_names(split_samples)
+    artifacts: list[ExplainabilityArtifact] = []
+
+    # ── Shared global explainers (summary / effect curves) ──────────────────
+    # Collect all eval rows for background-level plots.
+    eval_rows_all = _collect_tabular_matrix(split_samples, max_rows=max_patients)
     reference_image = (
         reference_sample.image if reference_sample.image is not None else None
     )
-    artifacts: list[ExplainabilityArtifact] = []
 
-    if "shap" in methods:
+    if "shap" in methods and eval_rows_all.size > 0:
         path = _tabular_shap_plot(
             model=model,
             background=background,
-            explain_rows=eval_rows,
+            explain_rows=eval_rows_all,
             feature_names=feature_names,
             reference_image=reference_image,
             reference_tabular=reference_sample.tabular,
-            output_path=output_dir / "tabular_shap.png",
+            output_path=output_dir / "tabular_shap_summary.png",
         )
         if path is not None:
             artifacts.append(
                 ExplainabilityArtifact(
-                    patient_id=reference_sample.patient_id,
+                    patient_id="all_patients",
                     modality="tabular",
                     method="shap",
                     path=path,
-                    note="Tabular SHAP summary",
+                    note="Tabular SHAP summary (all eval patients)",
                     metadata={"feature_count": int(background.shape[1])},
                 )
             )
 
-    if "lime" in methods:
-        path = _tabular_lime_plot(
-            model=model,
-            background=background,
-            explain_row=eval_rows[0],
-            feature_names=feature_names,
-            reference_image=reference_image,
-            reference_tabular=reference_sample.tabular,
-            output_path=output_dir / "tabular_lime.png",
-            seed=seed,
-        )
-        if path is not None:
-            artifacts.append(
-                ExplainabilityArtifact(
-                    patient_id=reference_sample.patient_id,
-                    modality="tabular",
-                    method="lime",
-                    path=path,
-                    note="Tabular local explanation",
-                    metadata={"feature_count": int(background.shape[1])},
-                )
-            )
-
-    if methods.intersection({"pdp", "ice", "ace"}):
+    if methods.intersection({"pdp", "ice", "ace"}) and eval_rows_all.size > 0:
         path = _tabular_effect_curves(
             model=model,
             background=background,
-            explain_rows=eval_rows,
+            explain_rows=eval_rows_all,
             feature_names=feature_names,
             reference_image=reference_image,
             reference_tabular=reference_sample.tabular,
@@ -339,7 +319,7 @@ def _explain_tabular_branch(
         if path is not None:
             artifacts.append(
                 ExplainabilityArtifact(
-                    patient_id=reference_sample.patient_id,
+                    patient_id="all_patients",
                     modality="tabular",
                     method="pdp_ice_ace",
                     path=path,
@@ -348,6 +328,50 @@ def _explain_tabular_branch(
                 )
             )
 
+    # ── Per-patient local explanations (LIME) ───────────────────────────────
+    # Build a list of (sample, tabular_row) pairs so each patient gets its own
+    # LIME explanation saved under its own patient_id sub-folder.
+    tabular_patients: list[tuple[PatientSample, np.ndarray]] = [
+        (s, s.tabular) for s in split_samples if s.tabular is not None
+    ][:max_patients]
+
+    if "lime" in methods:
+        for patient_sample, patient_tabular in tabular_patients:
+            pid = patient_sample.patient_id
+            patient_dir = output_dir / pid
+            patient_dir.mkdir(parents=True, exist_ok=True)
+            patient_image = (
+                patient_sample.image
+                if patient_sample.image is not None
+                else reference_image
+            )
+            path = _tabular_lime_plot(
+                model=model,
+                background=background,
+                explain_row=patient_tabular,
+                feature_names=feature_names,
+                reference_image=patient_image,
+                reference_tabular=patient_tabular,
+                output_path=patient_dir / "tabular_lime.png",
+                seed=seed,
+            )
+            if path is not None:
+                artifacts.append(
+                    ExplainabilityArtifact(
+                        patient_id=pid,
+                        modality="tabular",
+                        method="lime",
+                        path=path,
+                        note=f"Tabular local LIME explanation — {pid}",
+                        metadata={"feature_count": int(background.shape[1])},
+                    )
+                )
+
+    log.info(
+        "Tabular branch complete: %d artifacts, %d patients explained.",
+        len(artifacts),
+        len(tabular_patients),
+    )
     return artifacts
 
 
@@ -366,10 +390,13 @@ def _explain_image_branch(
     artifacts: list[ExplainabilityArtifact] = []
 
     # Two modes: raw WSI tiles or pre-extracted patch features.
+    # ndim >= 4 means (N_tiles, C, H, W) — raw tile bags.
+    # ndim == 2 means (N_patches, feature_dim) — pre-extracted embeddings.
+    # ndim == 1 means (feature_dim,) — single patient-level embedding.
     raw_train = [s for s in train_samples if s.image is not None and s.image.ndim >= 4]
     raw_eval = [s for s in split_samples if s.image is not None and s.image.ndim >= 4]
-    feat_train = [s for s in train_samples if s.image is not None and s.image.ndim == 2]
-    feat_eval = [s for s in split_samples if s.image is not None and s.image.ndim == 2]
+    feat_train = [s for s in train_samples if s.image is not None and s.image.ndim <= 2]
+    feat_eval = [s for s in split_samples if s.image is not None and s.image.ndim <= 2]
 
     if raw_eval:
         artifacts.extend(
@@ -601,99 +628,184 @@ def _explain_raw_image_branch(
     seed: int,
     output_dir: Path,
 ) -> list[ExplainabilityArtifact]:
+    """Run raw-image explainers, producing per-patient outputs.
+
+    Each patient in `split_samples[:max_patients]` that has tile data gets its
+    own sub-folder: `output_dir/<patient_id>/`.  Shared background-level plots
+    (SHAP summary, PDP/ICE/ACE) are saved at `output_dir/` with a suffix
+    indicating they cover all evaluated patients.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     artifacts: list[ExplainabilityArtifact] = []
 
+    # Build a shared background from training tiles.
     background_tiles = _collect_raw_image_tiles(train_samples, max_rows=background_size)
-    explain_tiles = _collect_raw_image_tiles(split_samples, max_rows=max_patients)
-    if background_tiles.size == 0 or explain_tiles.size == 0:
-        log.warning("No raw image tiles available; skipping raw image explainers.")
+    if background_tiles.size == 0:
+        log.warning("No raw training tiles available; skipping raw image explainers.")
         return []
 
-    reference_tabular = reference_sample.tabular
-    tile = explain_tiles[0]
-    display_tile = _to_display_tile(tile)
+    # Patients to explain — capped at max_patients.
+    patients_to_explain: list[PatientSample] = [
+        s for s in split_samples if s.image is not None and s.image.ndim >= 4
+    ][:max_patients]
+
+    if not patients_to_explain:
+        log.warning("No raw eval tiles available; skipping raw image explainers.")
+        return []
+
+    # ── Shared SHAP summary across all eval patients ─────────────────────────
+    # Collect one representative tile per patient for the SHAP summary plot.
+    explain_tiles_all = np.stack(
+        [np.asarray(s.image[0], dtype=np.float32) for s in patients_to_explain],
+        axis=0,
+    )  # (N_patients, C, H, W)
 
     if "shap" in methods:
         path = _raw_image_shap_plot(
             model=model,
             background=background_tiles,
-            explain_tiles=explain_tiles[: min(len(explain_tiles), 3)],
-            reference_tabular=reference_tabular,
-            output_path=output_dir / "image_shap.png",
+            explain_tiles=explain_tiles_all[: min(len(explain_tiles_all), 3)],
+            reference_tabular=patients_to_explain[0].tabular,
+            output_path=output_dir / "image_shap_summary.png",
         )
         if path is not None:
             artifacts.append(
                 ExplainabilityArtifact(
-                    patient_id=reference_sample.patient_id,
+                    patient_id="all_patients",
                     modality="image",
                     method="shap",
                     path=path,
-                    note="Raw-image gradient SHAP",
-                    metadata={"tile_shape": list(tile.shape)},
+                    note="Raw-image gradient SHAP (all eval patients)",
+                    metadata={"tile_shape": list(explain_tiles_all[0].shape)},
                 )
             )
 
-    if "lime" in methods:
-        path = _raw_image_lime_plot(
-            model=model,
-            display_tile=display_tile,
-            reference_tabular=reference_tabular,
-            output_path=output_dir / "image_lime.png",
-            seed=seed,
-        )
-        if path is not None:
-            artifacts.append(
-                ExplainabilityArtifact(
-                    patient_id=reference_sample.patient_id,
-                    modality="image",
-                    method="lime",
-                    path=path,
-                    note="Raw-image local explanation",
-                    metadata={"tile_shape": list(tile.shape)},
-                )
-            )
-
-    if "gradcam" in methods:
-        path = _raw_image_gradcam_plot(
-            model=model,
-            tile=tile,
-            reference_tabular=reference_tabular,
-            output_path=output_dir / "image_gradcam.png",
-        )
-        if path is not None:
-            artifacts.append(
-                ExplainabilityArtifact(
-                    patient_id=reference_sample.patient_id,
-                    modality="image",
-                    method="gradcam",
-                    path=path,
-                    note="Raw-image gradient CAM",
-                    metadata={"tile_shape": list(tile.shape)},
-                )
-            )
-
+    # Shared PDP/ICE/ACE — uses background tiles, not per-patient.
     if methods.intersection({"pdp", "ice", "ace"}):
         path = _image_effect_curves(
             model=model,
             background_tiles=background_tiles,
-            explain_tiles=explain_tiles,
-            reference_tabular=reference_tabular,
+            explain_tiles=explain_tiles_all,
+            reference_tabular=patients_to_explain[0].tabular,
             output_path=output_dir / "image_effects.png",
             seed=seed,
         )
         if path is not None:
             artifacts.append(
                 ExplainabilityArtifact(
-                    patient_id=reference_sample.patient_id,
+                    patient_id="all_patients",
                     modality="image",
                     method="pdp_ice_ace",
                     path=path,
-                    note="Image perturbation curves",
-                    metadata={"tile_shape": list(tile.shape)},
+                    note="Image perturbation curves (all eval patients)",
+                    metadata={"tile_shape": list(explain_tiles_all[0].shape)},
                 )
             )
 
+    # ── Per-patient: SHAP single-tile, LIME, Grad-CAM, ICE curve ────────────
+    for patient_sample in patients_to_explain:
+        pid = patient_sample.patient_id
+        patient_dir = output_dir / pid
+        patient_dir.mkdir(parents=True, exist_ok=True)
+
+        tile: np.ndarray = np.asarray(
+            patient_sample.image[0], dtype=np.float32
+        )  # (C, H, W)
+        display_tile: np.ndarray = _to_display_tile(tile)
+        patient_tabular = patient_sample.tabular
+        tile_4d = tile[np.newaxis]  # (1, C, H, W)
+
+        # ── Per-patient SHAP (single-tile gradient attribution) ──────────────
+        if "shap" in methods:
+            path = _raw_image_shap_plot(
+                model=model,
+                background=background_tiles,
+                explain_tiles=tile_4d,
+                reference_tabular=patient_tabular,
+                output_path=patient_dir / "image_shap.png",
+            )
+            if path is not None:
+                artifacts.append(
+                    ExplainabilityArtifact(
+                        patient_id=pid,
+                        modality="image",
+                        method="shap",
+                        path=path,
+                        note=f"Raw-image gradient SHAP — {pid}",
+                        metadata={"tile_shape": list(tile.shape)},
+                    )
+                )
+
+        # ── Per-patient LIME ─────────────────────────────────────────────────
+        if "lime" in methods:
+            path = _raw_image_lime_plot(
+                model=model,
+                display_tile=display_tile,
+                reference_tabular=patient_tabular,
+                output_path=patient_dir / "image_lime.png",
+                seed=seed,
+            )
+            if path is not None:
+                artifacts.append(
+                    ExplainabilityArtifact(
+                        patient_id=pid,
+                        modality="image",
+                        method="lime",
+                        path=path,
+                        note=f"Raw-image LIME — {pid}",
+                        metadata={"tile_shape": list(tile.shape)},
+                    )
+                )
+
+        # ── Per-patient Grad-CAM ─────────────────────────────────────────────
+        if "gradcam" in methods:
+            path = _raw_image_gradcam_plot(
+                model=model,
+                tile=tile,
+                reference_tabular=patient_tabular,
+                output_path=patient_dir / "image_gradcam.png",
+            )
+            if path is not None:
+                artifacts.append(
+                    ExplainabilityArtifact(
+                        patient_id=pid,
+                        modality="image",
+                        method="gradcam",
+                        path=path,
+                        note=f"Raw-image Grad-CAM — {pid}",
+                        metadata={"tile_shape": list(tile.shape)},
+                    )
+                )
+
+        # ── Per-patient PDP / ICE / ACE ──────────────────────────────────────
+        if methods.intersection({"pdp", "ice", "ace"}):
+            path = _image_effect_curves(
+                model=model,
+                background_tiles=background_tiles,
+                explain_tiles=tile_4d,
+                reference_tabular=patient_tabular,
+                output_path=patient_dir / "image_effects.png",
+                seed=seed,
+            )
+            if path is not None:
+                artifacts.append(
+                    ExplainabilityArtifact(
+                        patient_id=pid,
+                        modality="image",
+                        method="pdp_ice_ace",
+                        path=path,
+                        note=f"Image perturbation curves — {pid}",
+                        metadata={"tile_shape": list(tile.shape)},
+                    )
+                )
+
+        log.info("Explained patient %s (image branch)", pid)
+
+    log.info(
+        "Raw image branch complete: %d artifacts, %d patients explained.",
+        len(artifacts),
+        len(patients_to_explain),
+    )
     return artifacts
 
 
@@ -852,6 +964,18 @@ def _raw_image_gradcam_plot(
     reference_tabular: np.ndarray | None,
     output_path: Path,
 ) -> Path | None:
+    """Grad-CAM with correct gradient flow through frozen InceptionV3.
+
+    The ShimadaInceptionWSI model wraps the backbone CNN call in
+    ``torch.no_grad()`` when ``freeze_backbone=True``.  This severs the
+    computation graph so a normal ``model(x).backward()`` produces zero
+    gradients and a blank heatmap.
+
+    Fix: we hook on **the CNN sub-module directly** (``model._est.cnn``) and
+    do a single forward-pass through just that CNN sub-module inside
+    ``torch.enable_grad()``.  This gives us real gradients w.r.t. the last
+    conv activations without needing to un-freeze any parameters.
+    """
     try:
         import torch
     except ImportError:
@@ -859,8 +983,12 @@ def _raw_image_gradcam_plot(
         return None
 
     try:
-        model_module = getattr(model, "_est", model)
-        target_layer = _find_last_conv_layer(model_module)
+        # ── Locate the backbone CNN (handles both wrapped and plain models) ──
+        # For ShimadaInceptionWSI: model._est is InnerInception, .cnn is InceptionV3
+        inner = getattr(model, "_est", model)
+        cnn_module = getattr(inner, "cnn", None) or inner
+
+        target_layer = _find_last_conv_layer(cnn_module)
         if target_layer is None:
             log.warning("No Conv2d layer found; Grad-CAM is not applicable.")
             return None
@@ -869,7 +997,7 @@ def _raw_image_gradcam_plot(
         gradients: dict[str, Any] = {}
 
         def _forward_hook(_: Any, _inp: Any, out: Any) -> None:
-            activations["value"] = out.detach()
+            activations["value"] = out  # keep in graph for backward
 
         def _backward_hook(_: Any, _grad_in: Any, grad_out: Any) -> None:
             gradients["value"] = grad_out[0].detach()
@@ -878,35 +1006,62 @@ def _raw_image_gradcam_plot(
         handle_bwd = target_layer.register_full_backward_hook(_backward_hook)
 
         try:
-            image_tensor = torch.from_numpy(tile).float().unsqueeze(0)
-            image_tensor = image_tensor.unsqueeze(1)
-            tab = None
-            if reference_tabular is not None:
-                tab = torch.from_numpy(reference_tabular).float().unsqueeze(0)
-            output = model(image_tensor, tab).reshape(-1)
-            score = output[0]
-            model_module.zero_grad(set_to_none=True) if hasattr(
-                model_module, "zero_grad"
-            ) else None
-            score.backward()
+            # Run a single tile (C, H, W) → (1, C, H, W) through the CNN directly.
+            # torch.enable_grad() overrides any outer no_grad context so that
+            # the activation tensor stays in the computation graph for backward().
+            tile_t = torch.from_numpy(tile).float().unsqueeze(0)  # (1, C, H, W)
+            cnn_module.eval()  # keep BN/Dropout in eval mode
+
+            with torch.enable_grad():
+                feat = cnn_module(tile_t)  # (1, 2048) — InceptionV3 fc=Identity
+                score = feat.mean()  # scalar proxy: mean feature activation
+                cnn_module.zero_grad(set_to_none=True)
+                score.backward()
 
             if "value" not in activations or "value" not in gradients:
                 return None
 
             cam = (
-                gradients["value"].mean(dim=(2, 3), keepdim=True) * activations["value"]
+                gradients["value"].mean(dim=(2, 3), keepdim=True)
+                * activations["value"].detach()
             )
-            cam = cam.mean(dim=1)[0].cpu().numpy()
+            cam = cam.mean(dim=1)[0].cpu().numpy()  # (H_cam, W_cam)
             cam = np.maximum(cam, 0)
             if np.max(cam) > 0:
                 cam = cam / np.max(cam)
 
-            heatmap = np.interp(
-                np.linspace(0, cam.shape[0] - 1, tile.shape[1]),
-                np.arange(cam.shape[0]),
-                cam.mean(axis=1),
-            )
-            heatmap = np.tile(heatmap[:, None], (1, tile.shape[2]))
+            # ── 2D bilinear upsampling to tile spatial resolution ─────────────
+            # tile shape: (C, H, W) — we need the spatial dims H and W.
+            # cam shape:  (H_cam, W_cam) from the conv layer output.
+            # Using cv2.resize for proper bicubic/bilinear 2D interpolation so
+            # the heatmap covers the full image plane (not just vertical stripes).
+            try:
+                import cv2 as _cv2
+
+                heatmap = _cv2.resize(
+                    cam.astype(np.float32),
+                    (tile.shape[2], tile.shape[1]),  # (W, H) for cv2
+                    interpolation=_cv2.INTER_LINEAR,
+                )
+            except ImportError:
+                # Fallback: pure-numpy 2D bilinear via meshgrid
+                h_out, w_out = tile.shape[1], tile.shape[2]
+                h_in, w_in = cam.shape
+                row_idx = np.linspace(0, h_in - 1, h_out)
+                col_idx = np.linspace(0, w_in - 1, w_out)
+                row_lo = np.floor(row_idx).astype(int).clip(0, h_in - 1)
+                row_hi = np.ceil(row_idx).astype(int).clip(0, h_in - 1)
+                col_lo = np.floor(col_idx).astype(int).clip(0, w_in - 1)
+                col_hi = np.ceil(col_idx).astype(int).clip(0, w_in - 1)
+                row_frac = (row_idx - row_lo)[:, None]  # (H_out, 1)
+                col_frac = (col_idx - col_lo)[None, :]  # (1, W_out)
+                heatmap = (
+                    cam[np.ix_(row_lo, col_lo)] * (1 - row_frac) * (1 - col_frac)
+                    + cam[np.ix_(row_hi, col_lo)] * row_frac * (1 - col_frac)
+                    + cam[np.ix_(row_lo, col_hi)] * (1 - row_frac) * col_frac
+                    + cam[np.ix_(row_hi, col_hi)] * row_frac * col_frac
+                )
+
             display = _to_display_tile(tile)
 
             fig, ax = plt.subplots(figsize=(6, 6))

@@ -126,6 +126,18 @@ def _mode_eval(cfg_path: str, args: argparse.Namespace) -> None:
 
     cfg = load_config(cfg_path)
     split = args.split or "val"
+
+    # Inject explicit checkpoint into config so _load_model honours it
+    # (Priority 1 over auto-discovery by experiment name).
+    if getattr(args, "checkpoint", None):
+        if not hasattr(cfg, "training"):
+            from src.config import DotDict
+            cfg.training = DotDict({})
+        cfg.training.checkpoint_path = args.checkpoint
+        logging.getLogger(__name__).info(
+            "Using explicit checkpoint: %s", args.checkpoint
+        )
+
     logging.getLogger(__name__).info(
         "Mode: EVAL | Config: %s | Split: %s", cfg_path, split
     )
@@ -135,6 +147,7 @@ def _mode_eval(cfg_path: str, args: argparse.Namespace) -> None:
     for key, value in scores.items():
         print(f"  {key:<15}: {value:.4f}")
     print("─────────────────────────────────────────────────────\n")
+
 
 
 def _mode_predict(cfg_path: str, args: argparse.Namespace) -> None:
