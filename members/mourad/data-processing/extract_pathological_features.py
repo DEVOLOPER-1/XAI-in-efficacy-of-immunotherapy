@@ -1,63 +1,52 @@
-import os
+import sys
 import random
 from pathlib import Path
 import numpy as np
-import pandas as pd
 import torch
-import torch.nn as nn
-import torchvision.models as models
 import cv2
 from tqdm import tqdm
 
-try:
-    import openslide
-    import albumentations as A
-    import torchstain
-except ImportError:
-    raise ImportError(
-        "Missing libraries. Run: pip install pandas openslide-python albumentations opencv-python tqdm torchstain")
+# =====================================================================
+# 1. FIX PYTHON PATH (Allows importing from src)
+# =====================================================================
+# Dynamically add the project root (4 levels up) to the Python path
+project_root = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.config import DotDict
+from src.models.image import GoogLeNetWSI
 
 # =====================================================================
-# 1. CONFIGURATION & ABSOLUTE PATHS
+# 2. CONFIGURATION & ABSOLUTE PATHS
 # =====================================================================
-IMAGES_DIR = Path("/media/maro/Mom0-0/Datasets/TCGA/pathological/raw")
+IMAGES_DIR = Path("/media/maro/Mom0-0/Datasets/TCGA/pathological/images")
 FEATURES_DIR = Path("/media/maro/Mom0-0/Datasets/TCGA/pathological/features")
-MANIFEST_TSV = Path("/media/maro/Mom0-0/Datasets/TCGA/pathological/raw/gdc_sample_sheet.2026-05-10.tsv")
-WEIGHTS_PATH = Path("/home/maro/final-projects/DSAI_305_XAI/freezed-models/runs/checkpoints/best_wsi_model.pth")
+WEIGHTS_PATH = Path(
+    "/home/maro/final-projects/DSAI_305_XAI/logs/runs/checkpoints/Gnet_unfrozen_2layers+AttentionMIL-btch_16-lr_1e-5-log1p_true_fixed_final_weights.pth"
+)
 
-PATCH_SIZE = 256
 IMAGE_SIZE = 224
 MAX_PATCHES = 16
 
-# ImageNet Stats
+# ImageNet Stats for Normalization
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
 # =====================================================================
-# 2. MODEL SETUP (Matching Colab Architecture)
+# 3. MODEL SETUP
 # =====================================================================
-class GoogLeNetWSI(nn.Module):
-    """Must match the Colab training architecture to load the StateDict properly."""
-    def __init__(self):
-        super().__init__()
-        # FIX: Removed aux_logits=False so it perfectly matches your Colab run
-        self.cnn = models.googlenet(weights=models.GoogLeNet_Weights.DEFAULT)
-        self.cnn.fc = nn.Identity()
-        self.head = nn.Sequential(nn.Dropout(0.3), nn.Linear(1024, 1))
-
 def get_feature_extractor(device):
-    print("Loading Fine-Tuned GoogLeNet...")
+    print("Loading Fine-Tuned GoogLeNet from project pipeline...")
 
-    # 1. Instantiate the wrapper
-    wrapper = GoogLeNetWSI()
+    cfg = DotDict({"model": {"dropout": 0.3}})
+    wrapper = GoogLeNetWSI(cfg)
 
-    # 2. Load the weights safely across device architectures
     state_dict = torch.load(WEIGHTS_PATH, map_location=device, weights_only=True)
     wrapper.load_state_dict(state_dict)
 
-    # 3. Extract just the CNN (already outputs 1024D because fc is Identity)
-    extractor = wrapper.cnn
+    # Extract just the CNN backbone to get the [16, 1024] embeddings
+    extractor = wrapper._est.cnn
     extractor = extractor.to(device)
     extractor.eval()
 
@@ -65,82 +54,56 @@ def get_feature_extractor(device):
 
 
 # =====================================================================
-# 3. HELPER FUNCTIONS
+# 4. TILE PROCESSING
 # =====================================================================
-def resize_hwc(img: np.ndarray, size: int) -> np.ndarray:
-    if img.shape[0] == size and img.shape[1] == size:
-        return img
-    return cv2.resize(img, (size, size), interpolation=cv2.INTER_LINEAR)
+def process_patient_folder(patient_dir, max_patches, image_size):
+    """Reads PNG tiles directly from the patient's folder."""
 
+    # Grab all tile_XXX.png files in the folder
+    tile_paths = sorted(list(patient_dir.glob("tile_*.png")))
 
-def process_patient_slide(svs_path, max_patches, patch_size, image_size, augmentor, normalizer):
-    """Extracts valid, Macenko-normalized tissue patches from an SVS file."""
-    try:
-        slide = openslide.OpenSlide(str(svs_path))
-    except Exception as e:
-        print(f"\nError opening {svs_path}: {e}")
+    if not tile_paths:
         return None
 
-    width, height = slide.dimensions
-    grid_w, grid_h = max(1, width // patch_size), max(1, height // patch_size)
-
-    all_indices = list(range(grid_w * grid_h))
-    random.shuffle(all_indices)
+    # Optional: shuffle so we don't always grab just the top-left corner of the slide
+    random.shuffle(tile_paths)
 
     valid_patches = []
 
-    for idx in all_indices:
+    for path in tile_paths:
         if len(valid_patches) >= max_patches:
             break
 
-        x_off = (idx % grid_w) * patch_size
-        y_off = (idx // grid_w) * patch_size
-
-        try:
-            region = slide.read_region((x_off, y_off), 0, (patch_size, patch_size)).convert("RGB")
-        except Exception:
+        img = cv2.imread(str(path))
+        if img is None:
             continue
 
-        tile_np = np.array(region)
+        # Convert BGR to RGB
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # 1. Tissue Detection
-        gray = cv2.cvtColor(tile_np, cv2.COLOR_RGB2GRAY)
-        white_ratio = np.sum(gray > 220) / (patch_size * patch_size)
-        if white_ratio > 0.5:
-            continue
+        # Resize and Standardize
+        img = img.astype(np.float32) / 255.0
+        img = cv2.resize(img, (image_size, image_size))
+        img = (img - MEAN) / STD
 
-        # 2. Macenko Color Normalization
-        try:
-            tile_np, _, _ = normalizer.normalize(I=tile_np, stains=False)
-        except Exception:
-            continue
+        # HWC to CHW for PyTorch
+        img = img.transpose(2, 0, 1)
+        valid_patches.append(img)
 
-        # 3. Augmentation (Usually disabled for feature extraction)
-        if augmentor:
-            tile_np = augmentor(image=tile_np)["image"]
-
-        # 4. Resize and Standardize
-        tile_np = tile_np.astype(np.float32) / 255.0
-        tile_np = resize_hwc(tile_np, image_size)
-        tile_np = (tile_np - MEAN) / STD
-        tile_np = tile_np.transpose(2, 0, 1)  # HWC to CHW
-
-        valid_patches.append(tile_np)
-
-    slide.close()
-
-    # 5. Oversampling Guarantee (Ensures exactly [16, 1024] embeddings)
     if not valid_patches:
         return None
 
+    # --- THE FIX: Oversampling Guarantee ---
+    # If the patient has less than 16 valid patches, duplicate existing ones
     while len(valid_patches) < max_patches:
         valid_patches.append(random.choice(valid_patches))
 
+    # Stack into exactly [16, 3, 224, 224]
     return np.stack(valid_patches, axis=0)
 
 
 # =====================================================================
-# 4. MAIN EXECUTION
+# 5. MAIN EXECUTION
 # =====================================================================
 def main():
     FEATURES_DIR.mkdir(parents=True, exist_ok=True)
@@ -148,53 +111,38 @@ def main():
     print(f"Using device: {device}")
 
     extractor = get_feature_extractor(device)
-    normalizer = torchstain.normalizers.MacenkoNormalizer(backend='numpy')
 
-    # Intentionally set to None for deterministic Phase 2 extraction
-    augmentor = None
+    # Automatically find all patient folders in the raw directory
+    patient_folders = [p for p in IMAGES_DIR.iterdir() if p.is_dir()]
+    print(f"Found {len(patient_folders)} patient folders to process.")
 
-    print("Loading TSV manifest...")
-    manifest = pd.read_csv(MANIFEST_TSV, sep='\t')
-    manifest = manifest[manifest['Data Type'] == 'Slide Image']
-
-    processed_patients = set()
-
-    for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Extracting WSI"):
-        patient_id = row['Case ID']
-        file_id = row['File ID']
-        file_name = row['File Name']
-
-        if patient_id in processed_patients:
-            continue
+    for patient_dir in tqdm(patient_folders, desc="Extracting 1024D Features"):
+        patient_id = patient_dir.name
 
         output_file = FEATURES_DIR / f"{patient_id}.npy"
+
+        # Skip if already extracted
         if output_file.exists():
-            processed_patients.add(patient_id)
             continue
 
-        svs_path = IMAGES_DIR / file_id / file_name
-        if not svs_path.exists():
-            print(f"\nWarning: File not found on disk: {svs_path}")
-            continue
-
-        patches_np = process_patient_slide(
-            svs_path, MAX_PATCHES, PATCH_SIZE, IMAGE_SIZE, augmentor, normalizer
-        )
+        # Load, resize, normalize, and pad to exactly 16 patches
+        patches_np = process_patient_folder(patient_dir, MAX_PATCHES, IMAGE_SIZE)
 
         if patches_np is None:
-            print(f"\nWarning: No valid tissue found for {patient_id}")
+            tqdm.write(f"Warning: No valid tiles found for {patient_id}. Skipping.")
             continue
 
         # batch_tensor shape: [16, 3, 224, 224]
         batch_tensor = torch.from_numpy(patches_np).to(device)
+
         with torch.no_grad():
             # embeddings shape: [16, 1024]
             embeddings = extractor(batch_tensor)
 
+        # Save exactly [16, 1024] feature block
         np.save(output_file, embeddings.cpu().numpy())
-        processed_patients.add(patient_id)
 
-    print("\nExtraction complete! Ready for multimodal fusion.")
+    print("\nFeature Extraction Complete! Your ABMIL fusion layer is ready to go.")
 
 
 if __name__ == "__main__":
