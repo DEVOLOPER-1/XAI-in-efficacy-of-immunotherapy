@@ -762,9 +762,17 @@ def build_dataloaders(
         sorted_ids = sorted(all_ids)
         rng = random.Random(seed)
         rng.shuffle(sorted_ids)
+        
+        test_ratio = ds_cfg.get("test_ratio", 0.15)
+        n_test = int(len(sorted_ids) * test_ratio)
         n_val = max(1, int(len(sorted_ids) * val_ratio))
+        
         val_ids = sorted_ids[:n_val]
-        train_ids = sorted_ids[n_val:]
+        if n_test > 0:
+            test_ids = sorted_ids[-n_test:]
+            train_ids = sorted_ids[n_val:-n_test]
+        else:
+            train_ids = sorted_ids[n_val:]
 
     # -- Fit Tabular Scaler -----------------------------------
     if tabular_store:
