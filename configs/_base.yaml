@@ -1,7 +1,7 @@
 project_name: "WhiteBox - Explainable TMB Prediction"
 modalities:
-    image: false
-    tabular: true
+#    image: false
+#    tabular: true
 #    genetic: false ^^ not implemented yet; reserved for future work
 dataset:
 #data_root          str   "data"
@@ -17,20 +17,20 @@ dataset:
 #    seed               int   42
 #    batch_size         int   32
 #    image_size         int   224      ← resize each patch/tile to this resolution
-    data_root: "data"
-    tabular_file: "clinical.csv"
-    images_dir: "images"
-    features_dir: "features"
-    target_col: "TMB_NONSYNONYMOUS"
-    patient_id_col: "PATIENT_ID"
-    use_preextracted: false
+#    data_root: "data"
+#    tabular_file: "clinical.csv"
+#    images_dir: "images"
+#    features_dir: "features"
+#    target_col: "TMB_NONSYNONYMOUS"
+#    patient_id_col: "PATIENT_ID"
+#    use_preextracted: false
 #    patch_size: 256
 #    max_patches: 16
 #    val_ratio: 0.15
-    seed: 42
+#    seed: 42
 #    batch_size: 32
 #    image_size: 224
-    "patients_split_file":  "data/master_patient_splits.csv"
+#    "patients_split_file":  "data/master_patient_splits.csv"
 model:
 #    category: "tabular_only"        # "tabular_only", "image_only", or "fusion"
 #    fusion_strategy: "early"        # "early" or "late"

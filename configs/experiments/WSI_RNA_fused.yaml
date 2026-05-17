@@ -18,40 +18,54 @@ dataset:
 #    image_size         int   224      ← resize each patch/tile to this resolution
     data_root: "/media/maro/Mom0-0/Datasets/TCGA/"
     features_dir: "pathological/features"
-    manifest_tsv: "pathological/raw/gdc_sample_sheet.2026-05-10.tsv"
-    tabular_file: "stad_rna_selected:21.parquet"
-    target_col: "TMB"
+    images_dir: "pathological/images"
+    manifest_tsv: "pathological/raw/gdc_sample_sheet.tsv"
+    tabular_file: "coad_rna_selected:21.parquet"
     patient_id_col: "PATIENT_ID"
+    target_col: "TMB"
+    log1p_target: false                    # Apply log1p to targets before computing loss
+    run_preprocessor_pipeline: true
+
+    # Image/patch settings
     use_preextracted: true
     patch_size: 256
     max_patches: 16
-    val_ratio: 0.15
+    patients_split_file: "data/master_patient_splits.csv"
     seed: 42
     batch_size: 32
     image_size: 224
+
 model:
     category: "fusion"        # "tabular_only", "image_only", or "fusion"
-    fusion_strategy: "wsi_rna_mcb"
-    type: "wsi_rna_mcb"
-    droprate: 0.0
+    fusion_strategy: "late"
+    type: "late"
+    droprate: 0.3
     mcb_out_dim: 512
     image_dim: 1024
-    tabular_model_path: "freezed-models/runs/checkpoints/dnn_genetic_paper-epch:50-batch:32-lr:0.01_weights.pth"
+    tabular_model_path: "freezed-models/runs/checkpoints/dnn_genetic_paper-epch:60-batch:32-lr:1e-3-droprate:0.4_weights.pth"
+    wsi_model_path: "/home/maro/final-projects/DSAI_305_XAI/logs/runs/checkpoints/Gnet_unfrozen_2layers+AttentionMIL-btch_16-lr_1e-5-log1p_true_fixed_final_weights.pth"
+    stage1_weights_path: "freezed-models/runs/checkpoints/wsi-rna-epch:60-lr:1e-2-dr:0.3-non_linear_late_fusion-huber_delta:.1_weights.pth"
 
 training:
   save_dir: freezed-models/runs/checkpoints
-
-  epochs: 100
+  epochs: 60
   val_every: 1
-  lr: 0.0005
+  lr: 0.000005
   weight_decay: 0.0001
 
+  huber_delta: 0.1
 
-  risk_threshold:  3.84
+
+  risk_threshold:  10
   upload_pickled_model: true
 wandb:
-    run_name: "wsi-rna-epch:100-lr:5e-4-dr:0.0-mcb_dim:1024"
+    run_name: "wsi-rna-epch:60-lr:5e-6-dr:0.3-non_linear_late_fusion_phase2-huber_delta:.1"
     tags:
+        - COAD
         - pathological_genetic
         - neural_network
         - paper_architecture
+        - Gnet_features
+        - late_fusion
+        - non_linear_meta_learner
+        - phase_2

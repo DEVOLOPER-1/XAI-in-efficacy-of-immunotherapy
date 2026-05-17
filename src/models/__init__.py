@@ -195,8 +195,8 @@ def _load_late_fusion(cfg: DotDict) -> Any:
     Gracefully degrades when one modality is None — uses the other alone.
     """
     try:
-        from src.models.fusion import LateFusionModel  # type: ignore[import]
-        return LateFusionModel(cfg)
+        from src.models.late_fusion import LateFusionNet  # type: ignore[import]
+        return LateFusionNet(cfg)
     except ImportError as exc:
         raise ImportError(
             "LateFusionModel requires PyTorch: uv pip install torch"
@@ -257,7 +257,7 @@ _FUSION_REGISTRY: dict[str, Any] = {
     "wsi_rna_mcb": _load_wsi_rna_mcb,
     "huang_mmdl": _load_huang_mmdl,
     # "early": _load_early_fusion,  # TODO: implement EarlyFusionModel in src/models/fusion.py
-    # "late":  _load_late_fusion,   # TODO: implement LateFusionModel in src/models/fusion.py
+    "late":  _load_late_fusion,
 }
 
 # Flat view for listing + validation

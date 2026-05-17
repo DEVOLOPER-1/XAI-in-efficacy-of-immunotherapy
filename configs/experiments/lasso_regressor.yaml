@@ -4,7 +4,6 @@ experiment_name: lasso_baseline_genetic
 modalities:
   tabular: true
   image:   false
-  modality: genetic  # for the dashboard categories
 
 # ── Model ───────────────────────────────────────────────────────────────────
 model:
@@ -26,11 +25,10 @@ dataset:
   # Required local artifact: this experiment expects the preprocessing/data
   # preparation workflow to generate `data/processed/stad_rna.parquet`
   # before startup. The parquet file is not committed in this repository.
-  tabular_file:    stad_rna.parquet
+  tabular_file:    coad_rna.parquet
   target_col:      TMB   # regression target column
 #  run_preprocessor_pipeline: false (default: false)
 #  preprocessor_save_path: "freezed-models/runs/checkpoints/tabular_preprocessing_pipeline.pkl"
-  val_ratio:    0.15    # 15% of patients held out for validation
   seed:         42      # controls the deterministic train/val split
 #  batch_size:   512     not used for decision tree, but kept here for config completeness
 
@@ -42,17 +40,18 @@ dataset:
 # ── Training ────────────────────────────────────────────────────────────────
 training:
   save_dir: freezed-models/runs/checkpoints
-  upload_pickled_model: false
+  upload_pickled_model: true
 
   # risk_threshold: binarise TMB at this value to compute AUROC/AUPRC.
   # Patients with TMB >= threshold → high-risk class (label 1).
   # Set to null to skip binary metrics.
-  risk_threshold:  3.84
+  risk_threshold:  10
 
 # ── Weights & Biases ────────────────────────────────────────────────────────
 wandb:
-  run_name: "lasso_alpha:0.1_scaled_iter:val_ratio:.15"
+  run_name: "lasso_alpha:0.1_scaled_iter:1e4_logTMB"
   tags:
     - genetic_only
+    - COAD
     - linear
     - feature_selection
