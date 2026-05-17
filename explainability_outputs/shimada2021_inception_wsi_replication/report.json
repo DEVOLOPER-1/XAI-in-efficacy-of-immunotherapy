@@ -1,0 +1,221 @@
+{
+  "split": "test",
+  "output_dir": "explainability_outputs/shimada2021_inception_wsi_replication",
+  "experiment_name": "shimada2021_inception_wsi_replication",
+  "model_type": "inception_shimada",
+  "summary": {
+    "artifacts_total": 14.0,
+    "patients_covered": 4.0,
+    "modality_image": 14.0,
+    "method_shap": 4.0,
+    "method_pdp_ice_ace": 4.0,
+    "method_lime": 3.0,
+    "method_gradcam": 3.0,
+    "rmse": 25.498792509418195,
+    "mae": 10.468477508425712,
+    "huber": 10.083002173906808,
+    "r2": -0.1764829970156696,
+    "pearson_r": -0.041825523740158285,
+    "c_index": 0.5109677419354839,
+    "auroc": 0.4329004329004328,
+    "auprc": 0.1634273904608669
+  },
+  "artifacts": [
+    {
+      "patient_id": "all_patients",
+      "modality": "image",
+      "method": "shap",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/image_shap_summary.png",
+      "note": "Raw-image gradient SHAP (all eval patients)",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "all_patients",
+      "modality": "image",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/image_effects.png",
+      "note": "Image perturbation curves (all eval patients)",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "image",
+      "method": "shap",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-5M-AAT4/image_shap.png",
+      "note": "Raw-image gradient SHAP \u2014 TCGA-5M-AAT4",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "image",
+      "method": "lime",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-5M-AAT4/image_lime.png",
+      "note": "Raw-image LIME \u2014 TCGA-5M-AAT4",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "image",
+      "method": "gradcam",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-5M-AAT4/image_gradcam.png",
+      "note": "Raw-image Grad-CAM \u2014 TCGA-5M-AAT4",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "image",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-5M-AAT4/image_effects.png",
+      "note": "Image perturbation curves \u2014 TCGA-5M-AAT4",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2682",
+      "modality": "image",
+      "method": "shap",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2682/image_shap.png",
+      "note": "Raw-image gradient SHAP \u2014 TCGA-A6-2682",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2682",
+      "modality": "image",
+      "method": "lime",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2682/image_lime.png",
+      "note": "Raw-image LIME \u2014 TCGA-A6-2682",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2682",
+      "modality": "image",
+      "method": "gradcam",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2682/image_gradcam.png",
+      "note": "Raw-image Grad-CAM \u2014 TCGA-A6-2682",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2682",
+      "modality": "image",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2682/image_effects.png",
+      "note": "Image perturbation curves \u2014 TCGA-A6-2682",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2684",
+      "modality": "image",
+      "method": "shap",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2684/image_shap.png",
+      "note": "Raw-image gradient SHAP \u2014 TCGA-A6-2684",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2684",
+      "modality": "image",
+      "method": "lime",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2684/image_lime.png",
+      "note": "Raw-image LIME \u2014 TCGA-A6-2684",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2684",
+      "modality": "image",
+      "method": "gradcam",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2684/image_gradcam.png",
+      "note": "Raw-image Grad-CAM \u2014 TCGA-A6-2684",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2684",
+      "modality": "image",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2684/image_effects.png",
+      "note": "Image perturbation curves \u2014 TCGA-A6-2684",
+      "metadata": {
+        "tile_shape": [
+          3,
+          299,
+          299
+        ]
+      }
+    }
+  ]
+}

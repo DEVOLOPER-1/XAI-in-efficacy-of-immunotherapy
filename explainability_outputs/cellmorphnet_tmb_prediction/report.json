@@ -1,0 +1,178 @@
+{
+  "split": "test",
+  "output_dir": "explainability_outputs/cellmorphnet_tmb_prediction",
+  "experiment_name": "cellmorphnet_tmb_prediction",
+  "model_type": "cellmorphnet",
+  "summary": {
+    "artifacts_total": 11.0,
+    "patients_covered": 4.0,
+    "modality_image": 11.0,
+    "method_shap": 4.0,
+    "method_pdp_ice_ace": 4.0,
+    "method_lime": 3.0,
+    "rmse": 26.925408549128075,
+    "mae": 12.963738543646675,
+    "huber": 12.506954502247911,
+    "r2": -0.29931773583432175,
+    "pearson_r": 0.258908017816422,
+    "c_index": 0.44935972060535506,
+    "auroc": 0.71875,
+    "auprc": 0.39579516911966606
+  },
+  "artifacts": [
+    {
+      "patient_id": "all_patients",
+      "modality": "image",
+      "method": "shap",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_shap_summary.png",
+      "note": "Raw-image gradient SHAP (all eval patients)",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "all_patients",
+      "modality": "image",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_effects.png",
+      "note": "Image perturbation curves (all eval patients)",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2686",
+      "modality": "image",
+      "method": "shap",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-A6-2686/image_shap.png",
+      "note": "Raw-image gradient SHAP \u2014 TCGA-A6-2686",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2686",
+      "modality": "image",
+      "method": "lime",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-A6-2686/image_lime.png",
+      "note": "Raw-image LIME \u2014 TCGA-A6-2686",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2686",
+      "modality": "image",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-A6-2686/image_effects.png",
+      "note": "Image perturbation curves \u2014 TCGA-A6-2686",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-D5-6922",
+      "modality": "image",
+      "method": "shap",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-D5-6922/image_shap.png",
+      "note": "Raw-image gradient SHAP \u2014 TCGA-D5-6922",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-D5-6922",
+      "modality": "image",
+      "method": "lime",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-D5-6922/image_lime.png",
+      "note": "Raw-image LIME \u2014 TCGA-D5-6922",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-D5-6922",
+      "modality": "image",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-D5-6922/image_effects.png",
+      "note": "Image perturbation curves \u2014 TCGA-D5-6922",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-AA-3949",
+      "modality": "image",
+      "method": "shap",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-AA-3949/image_shap.png",
+      "note": "Raw-image gradient SHAP \u2014 TCGA-AA-3949",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-AA-3949",
+      "modality": "image",
+      "method": "lime",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-AA-3949/image_lime.png",
+      "note": "Raw-image LIME \u2014 TCGA-AA-3949",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-AA-3949",
+      "modality": "image",
+      "method": "pdp_ice_ace",
+      "path": "explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-AA-3949/image_effects.png",
+      "note": "Image perturbation curves \u2014 TCGA-AA-3949",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    }
+  ]
+}

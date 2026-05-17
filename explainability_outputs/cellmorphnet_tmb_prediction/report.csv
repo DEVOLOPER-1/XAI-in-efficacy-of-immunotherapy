@@ -1,0 +1,12 @@
+patient_id,modality,method,path,note
+all_patients,image,shap,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_shap_summary.png,Raw-image gradient SHAP (all eval patients)
+all_patients,image,pdp_ice_ace,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_effects.png,Image perturbation curves (all eval patients)
+TCGA-A6-2686,image,shap,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-A6-2686/image_shap.png,Raw-image gradient SHAP — TCGA-A6-2686
+TCGA-A6-2686,image,lime,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-A6-2686/image_lime.png,Raw-image LIME — TCGA-A6-2686
+TCGA-A6-2686,image,pdp_ice_ace,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-A6-2686/image_effects.png,Image perturbation curves — TCGA-A6-2686
+TCGA-D5-6922,image,shap,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-D5-6922/image_shap.png,Raw-image gradient SHAP — TCGA-D5-6922
+TCGA-D5-6922,image,lime,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-D5-6922/image_lime.png,Raw-image LIME — TCGA-D5-6922
+TCGA-D5-6922,image,pdp_ice_ace,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-D5-6922/image_effects.png,Image perturbation curves — TCGA-D5-6922
+TCGA-AA-3949,image,shap,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-AA-3949/image_shap.png,Raw-image gradient SHAP — TCGA-AA-3949
+TCGA-AA-3949,image,lime,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-AA-3949/image_lime.png,Raw-image LIME — TCGA-AA-3949
+TCGA-AA-3949,image,pdp_ice_ace,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/TCGA-AA-3949/image_effects.png,Image perturbation curves — TCGA-AA-3949

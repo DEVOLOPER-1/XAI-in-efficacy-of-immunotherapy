@@ -1,0 +1,15 @@
+patient_id,modality,method,path,note
+all_patients,image,shap,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/image_shap_summary.png,Raw-image gradient SHAP (all eval patients)
+all_patients,image,pdp_ice_ace,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/image_effects.png,Image perturbation curves (all eval patients)
+TCGA-5M-AAT4,image,shap,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-5M-AAT4/image_shap.png,Raw-image gradient SHAP — TCGA-5M-AAT4
+TCGA-5M-AAT4,image,lime,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-5M-AAT4/image_lime.png,Raw-image LIME — TCGA-5M-AAT4
+TCGA-5M-AAT4,image,gradcam,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-5M-AAT4/image_gradcam.png,Raw-image Grad-CAM — TCGA-5M-AAT4
+TCGA-5M-AAT4,image,pdp_ice_ace,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-5M-AAT4/image_effects.png,Image perturbation curves — TCGA-5M-AAT4
+TCGA-A6-2682,image,shap,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2682/image_shap.png,Raw-image gradient SHAP — TCGA-A6-2682
+TCGA-A6-2682,image,lime,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2682/image_lime.png,Raw-image LIME — TCGA-A6-2682
+TCGA-A6-2682,image,gradcam,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2682/image_gradcam.png,Raw-image Grad-CAM — TCGA-A6-2682
+TCGA-A6-2682,image,pdp_ice_ace,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2682/image_effects.png,Image perturbation curves — TCGA-A6-2682
+TCGA-A6-2684,image,shap,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2684/image_shap.png,Raw-image gradient SHAP — TCGA-A6-2684
+TCGA-A6-2684,image,lime,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2684/image_lime.png,Raw-image LIME — TCGA-A6-2684
+TCGA-A6-2684,image,gradcam,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2684/image_gradcam.png,Raw-image Grad-CAM — TCGA-A6-2684
+TCGA-A6-2684,image,pdp_ice_ace,explainability_outputs/shimada2021_inception_wsi_replication/image/raw/TCGA-A6-2684/image_effects.png,Image perturbation curves — TCGA-A6-2684
