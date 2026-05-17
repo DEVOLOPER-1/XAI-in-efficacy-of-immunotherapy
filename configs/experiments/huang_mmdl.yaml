@@ -1,0 +1,89 @@
+# configs/experiments/huang_mmdl.yaml
+# Huang et al. (2022) Multi-Modal Deep Learning for TMB Prediction
+# Modified: regression output (continuous TMB) instead of binary classification
+
+experiment_name: huang2022_mmdl_regression
+
+# ── Modality Configuration ─────────────────────────────────────────────────
+modalities:
+  image: true
+  tabular: true   # REQUIRED: fusion model needs both modalities
+
+# ── Dataset Configuration ──────────────────────────────────────────────────
+dataset:
+  target_col: "TMB_NONSYNONYMOUS"
+  image_size: 224           # ResNet input size
+  max_patches: 16           # Tiles per slide (paper uses variable, we fix for batching)
+  batch_size: 16            # Reduced due to MCB memory overhead
+  seed: 42
+  val_ratio: 0.15
+  
+  # Target transformation for regression stability
+  log1p_target: true        # TMB is heavy-tailed; log1p stabilizes training
+  # Note: target_mean/std below are for log1p(TMB) if log1p_target=true
+  target_mean: 2.71         # Approximate mean of log1p(TMB) in training set
+  target_std: 1.30          # Approximate std of log1p(TMB) in training set
+
+# ── Model Configuration ────────────────────────────────────────────────────
+model:
+  category: "fusion"
+  type: "huang_mmdl"
+  
+  # Task: regression for continuous TMB (modified from paper's classification)
+  task_mode: "regression"
+  
+  # Backbone settings
+  freeze_backbone: true     # Start frozen; unfreeze later for fine-tuning
+  
+  # MCB fusion settings (paper defaults)
+  mcb_output_dim: 8000      # Compact bilinear output dimension
+  clinical_embed_dim: 128   # Clinical feature embedding size
+  fusion_embed_dim: 512     # Post-fusion projection dimension
+  
+  # Regularization
+  dropout: 0.2              # Paper uses 0.2 dropout
+  
+  # ── Feature Selection for Clinical Features ──────────────────────────
+  select_clinical_features: true    # Enable learnable feature selection
+  target_k_features: 10             # Encourage selecting ~10 important features
+  feature_selection_weight: 0.01    # L1 sparsity regularization weight
+  
+  # Optimizer defaults (training section takes precedence)
+  learning_rate: 1e-4
+  epochs: 50
+  clinical_input_dim: 8
+# ── Training Hyperparameters ───────────────────────────────────────────────
+training:
+  epochs: 50
+  val_every: 5
+  
+  # Differential learning rates: backbone gets 10× lower LR
+  lr: 1e-4
+  backbone_lr_factor: 0.1     # Backbone LR = 1e-4 × 0.1 = 1e-5
+  
+  weight_decay: 1e-4
+  grad_clip: 1.0              # Prevent gradient explosion
+  
+  # LR scheduling (paper doesn't specify; we add for stability)
+  scheduler: "ReduceLROnPlateau"
+  scheduler_patience: 10
+  scheduler_factor: 0.5
+  
+  save_dir: "logs/runs/checkpoints"
+  upload_pickled_model: false
+  
+  # Risk threshold for derived classification metrics (optional)
+  risk_threshold: 27.0        # TMB cutoff for AUROC/AUPRC computation
+
+# ── Weights & Biases Configuration ─────────────────────────────────────────
+wandb:
+  entity: "mohamed-mourad-zewail-city"
+  project_name: "TMB-prediction"
+  run_name: "huang2022_mmdl_regression_fusion"
+  tags:
+    - multi_modal
+    - resnet18
+    - mcb_fusion
+    - feature_selection
+    - huang2022
+    - regression
