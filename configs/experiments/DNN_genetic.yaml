@@ -22,7 +22,7 @@ model:
   category: tabular_only
   type:     tabular_mlp
 
-  droprate: 0
+  droprate: 0.4
   
   random_state: 42
   target_scale: false
@@ -35,6 +35,11 @@ dataset:
   log1p_target: false                    # Apply log1p to targets before computing loss
   run_preprocessor_pipeline: true
 
+  use_preextracted: true
+  patch_size: 512                       # Original tile size (if tiling)
+  max_patches: 16                       # Max tiles per slide (zero-padded if fewer)
+  image_size: 224                       # Resize to InceptionV3's native resolution
+
   patients_split_file: "data/master_patient_splits.csv"
   seed:         42      # controls the deterministic train/val split
   batch_size:   32
@@ -43,10 +48,10 @@ dataset:
 training:
   save_dir: freezed-models/runs/checkpoints
 
-  epochs: 150
+  epochs: 60
   val_every: 1
   lr: 0.001
-#  weight_decay: 0.0001
+  weight_decay: 0.0001
 
 
   risk_threshold:  10
@@ -54,7 +59,7 @@ training:
 
 # ── Weights & Biases ────────────────────────────────────────────────────────
 wandb:
-  run_name: "dnn_genetic_paper-epch:150-batch:32-lr:1e-3-droprate:0"
+  run_name: "dnn_genetic_paper-epch:60-batch:32-lr:1e-3-droprate:0.4"
   tags:
     - genetic_only
     - COAD
