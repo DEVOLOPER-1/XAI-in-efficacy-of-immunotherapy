@@ -32,7 +32,7 @@ dataset:
     max_patches: 16
     patients_split_file: "data/master_patient_splits.csv"
     seed: 42
-    batch_size: 32
+    batch_size: 4
     image_size: 224
 
 model:

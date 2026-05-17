@@ -246,6 +246,7 @@ def run_explainability(
             max_patients=max_patients,
             seed=seed,
             output_dir=output_dir / "image",
+            experiment_name=report.experiment_name,
         )
         report.artifacts.extend(image_artifacts)
 
@@ -461,6 +462,7 @@ def _explain_image_branch(
     max_patients: int,
     seed: int,
     output_dir: Path,
+    experiment_name: str = "Experiment", # <-- NEW
 ) -> list[ExplainabilityArtifact]:
     output_dir.mkdir(parents=True, exist_ok=True)
     artifacts: list[ExplainabilityArtifact] = []
@@ -486,21 +488,12 @@ def _explain_image_branch(
                 max_patients=max_patients,
                 seed=seed,
                 output_dir=output_dir / "raw",
+                experiment_name=experiment_name,  # <-- NEW
             )
         )
     elif feat_eval:
-        artifacts.extend(
-            _explain_image_feature_branch(
-                model=model,
-                train_samples=feat_train,
-                split_samples=feat_eval,
-                reference_sample=reference_sample,
-                methods=methods,
-                background_size=background_size,
-                max_patients=max_patients,
-                seed=seed,
-                output_dir=output_dir / "features",
-            )
+        log.info(
+            "Skipping image features explainability as it's not informative"
         )
     else:
         log.warning(
@@ -763,6 +756,7 @@ def _explain_raw_image_branch(
     max_patients: int,
     seed: int,
     output_dir: Path,
+    experiment_name: str = "Experiment", # <-- NEW
 ) -> list[ExplainabilityArtifact]:
     """Run raw-image explainers, producing per-patient outputs.
 
@@ -796,7 +790,7 @@ def _explain_raw_image_branch(
         axis=0,
     )  # (N_patients, C, H, W)
 
-    if "shap" in methods:
+    if "image_shap" in methods:
         path = _raw_image_shap_plot(
             model=model,
             background=background_tiles,
@@ -843,6 +837,12 @@ def _explain_raw_image_branch(
         pid = patient_sample.patient_id
         patient_dir = output_dir / pid
         patient_dir.mkdir(parents=True, exist_ok=True)
+        tmb_val = (
+            f"{patient_sample.target:.2f}"
+            if patient_sample.target is not None
+            else "Unknown"
+        )
+        plot_title = f"Exp: {experiment_name} | Patient: {pid} | True TMB: {tmb_val}"
 
         tile: np.ndarray = np.asarray(
             patient_sample.image[0], dtype=np.float32
@@ -852,7 +852,7 @@ def _explain_raw_image_branch(
         tile_4d = tile[np.newaxis]  # (1, C, H, W)
 
         # ── Per-patient SHAP (single-tile gradient attribution) ──────────────
-        if "shap" in methods:
+        if "image_shap" in methods:
             path = _raw_image_shap_plot(
                 model=model,
                 background=background_tiles,
@@ -873,7 +873,7 @@ def _explain_raw_image_branch(
                 )
 
         # ── Per-patient LIME ─────────────────────────────────────────────────
-        if "lime" in methods:
+        if "image_lime" in methods:
             path = _raw_image_lime_plot(
                 model=model,
                 display_tile=display_tile,
@@ -900,6 +900,7 @@ def _explain_raw_image_branch(
                 tile=tile,
                 reference_tabular=patient_tabular,
                 output_path=patient_dir / "image_gradcam.png",
+                title=plot_title,  # <-- NEW
             )
             if path is not None:
                 artifacts.append(
@@ -1099,6 +1100,7 @@ def _raw_image_gradcam_plot(
     tile: np.ndarray,
     reference_tabular: np.ndarray | None,
     output_path: Path,
+    title: str = "", # <-- NEW
 ) -> Path | None:
     """Grad-CAM with correct gradient flow through frozen InceptionV3.
 
@@ -1146,6 +1148,7 @@ def _raw_image_gradcam_plot(
             # torch.enable_grad() overrides any outer no_grad context so that
             # the activation tensor stays in the computation graph for backward().
             tile_t = torch.from_numpy(tile).float().unsqueeze(0)  # (1, C, H, W)
+            tile_t.requires_grad = (True)
             cnn_module.eval()  # keep BN/Dropout in eval mode
 
             with torch.enable_grad():
@@ -1202,8 +1205,12 @@ def _raw_image_gradcam_plot(
 
             fig, ax = plt.subplots(figsize=(6, 6))
             ax.imshow(display)
-            ax.imshow(heatmap, cmap="jet", alpha=0.40)
-            ax.set_title("Grad-CAM")
+            ax.imshow(heatmap, cmap="jet", alpha=0.4)
+
+            if title:
+                ax.set_title(title, fontsize=11)
+            else:
+                ax.set_title("Grad-CAM")
             ax.axis("off")
             fig.tight_layout()
             fig.savefig(output_path, dpi=300, bbox_inches="tight")
@@ -1331,7 +1338,7 @@ def _explain_image_feature_branch(
                 )
             )
 
-    if "lime" in methods:
+    if "image_lime" in methods:
         path = _tabular_lime_plot(
             model=model,
             background=background,

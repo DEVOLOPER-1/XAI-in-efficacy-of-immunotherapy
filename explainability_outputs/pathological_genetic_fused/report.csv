@@ -1,0 +1,4 @@
+patient_id,modality,method,path,note
+TCGA-5M-AAT4,image,gradcam,explainability_outputs/pathological_genetic_fused/image/raw/TCGA-5M-AAT4/image_gradcam.png,Raw-image Grad-CAM — TCGA-5M-AAT4
+TCGA-A6-2682,image,gradcam,explainability_outputs/pathological_genetic_fused/image/raw/TCGA-A6-2682/image_gradcam.png,Raw-image Grad-CAM — TCGA-A6-2682
+TCGA-A6-2684,image,gradcam,explainability_outputs/pathological_genetic_fused/image/raw/TCGA-A6-2684/image_gradcam.png,Raw-image Grad-CAM — TCGA-A6-2684

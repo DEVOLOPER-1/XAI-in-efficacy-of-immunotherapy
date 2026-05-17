@@ -1,0 +1,64 @@
+{
+  "split": "test",
+  "output_dir": "explainability_outputs/pathological_genetic_fused",
+  "experiment_name": "pathological_genetic_fused",
+  "model_type": "late",
+  "summary": {
+    "artifacts_total": 3.0,
+    "patients_covered": 3.0,
+    "modality_image": 3.0,
+    "method_gradcam": 3.0,
+    "rmse": 17.579859970363195,
+    "mae": 7.427334782481194,
+    "huber": 6.960131939381777,
+    "r2": 0.4407870141547847,
+    "pearson_r": 0.7300155301383938,
+    "c_index": 0.32645161290322583,
+    "auroc": 0.9783549783549784,
+    "auprc": 0.773639455782313
+  },
+  "artifacts": [
+    {
+      "patient_id": "TCGA-5M-AAT4",
+      "modality": "image",
+      "method": "gradcam",
+      "path": "explainability_outputs/pathological_genetic_fused/image/raw/TCGA-5M-AAT4/image_gradcam.png",
+      "note": "Raw-image Grad-CAM \u2014 TCGA-5M-AAT4",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2682",
+      "modality": "image",
+      "method": "gradcam",
+      "path": "explainability_outputs/pathological_genetic_fused/image/raw/TCGA-A6-2682/image_gradcam.png",
+      "note": "Raw-image Grad-CAM \u2014 TCGA-A6-2682",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    },
+    {
+      "patient_id": "TCGA-A6-2684",
+      "modality": "image",
+      "method": "gradcam",
+      "path": "explainability_outputs/pathological_genetic_fused/image/raw/TCGA-A6-2684/image_gradcam.png",
+      "note": "Raw-image Grad-CAM \u2014 TCGA-A6-2684",
+      "metadata": {
+        "tile_shape": [
+          3,
+          224,
+          224
+        ]
+      }
+    }
+  ]
+}
