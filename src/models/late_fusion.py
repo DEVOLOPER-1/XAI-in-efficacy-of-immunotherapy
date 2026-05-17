@@ -75,48 +75,55 @@ class LateFusionNet(_TorchBase):
                 super().__init__()
                 dropout_rate = cfg.model.get("droprate", 0.3)
 
-                # --- 1. Load the RNA Expert ---
+                # 1. Define the Architectures
                 self.tabular_net = TMBNet(input_dim=21, p=dropout_rate)
-                tabular_weights_path = cfg.model.get(
-                    "tabular_model_path",
-                    "freezed-models/runs/checkpoints/best_dnn_model.pth",
-                )
-
-                # Load and clean RNA weights
-                tab_state_dict = torch.load(tabular_weights_path, weights_only=False)
-                clean_tab_dict = {
-                    k.replace("_est.", ""): v for k, v in tab_state_dict.items()
-                }
-                self.tabular_net.load_state_dict(clean_tab_dict)
-
-                # --- 2. Load the WSI ABMIL Expert ---
                 self.wsi_net = ABMIL_Expert(dropout_rate=dropout_rate)
-                wsi_weights_path = cfg.model.get(
-                    "wsi_model_path",
-                    "freezed-models/runs/checkpoints/best_wsi_model.pth",
+
+                # 2. Define the Non-Linear Meta-Learner (from your Stage 1 win)
+                self.meta_learner = nn.Sequential(
+                    nn.Linear(2, 8), nn.ReLU(), nn.Linear(8, 1)
                 )
 
-                # Load and filter ONLY the attention/head weights (ignoring the CNN backbone)
-                wsi_state_dict = torch.load(wsi_weights_path, weights_only=True)
-                clean_wsi_dict = {}
-                for k, v in wsi_state_dict.items():
-                    if "attention" in k or "head" in k:
-                        clean_wsi_dict[k.replace("_est.", "")] = v
-                self.wsi_net.load_state_dict(clean_wsi_dict, strict=False)
+                # =================================================================
+                # 3. LOAD STAGE 1 WEIGHTS (The crucial step for Stage 2)
+                # =================================================================
+                stage1_weights_path = cfg.model.get("stage1_weights_path", None)
 
-                # --- 3. FREEZE BOTH EXPERTS (Crucial for Late Fusion) ---
-                for param in self.tabular_net.parameters():
+                if stage1_weights_path:
+                    # We are in Stage 2! Load the entire fused network state
+                    print(f"Loading Stage 1 Fusion weights from: {stage1_weights_path}")
+                    state_dict = torch.load(stage1_weights_path, weights_only=False)
+                    # Clean the '_est.' prefix if it exists from your _TorchBase wrapper
+                    clean_dict = {
+                        k.replace("_est.", ""): v for k, v in state_dict.items()
+                    }
+                    self.load_state_dict(clean_dict)
+                else:
+                    # Fallback: If you ever need to restart Stage 1, load individual experts here
+                    print("No Stage 1 weights provided. Starting from frozen experts.")
+                    # (You can paste your old individual loading code here if desired)
+
+                # =================================================================
+                # 4. GENTLE UNFREEZING LOGIC
+                # =================================================================
+                # First, lock down absolutely everything to prevent accidents.
+                for param in self.parameters():
                     param.requires_grad = False
-                for param in self.wsi_net.parameters():
-                    param.requires_grad = False
 
-                # --- 4. The Meta-Learner ---
-                # Takes 2 inputs (RNA prediction, WSI prediction) and outputs 1 Final Prediction
-                self.meta_learner = nn.Linear(2, 1)
+                # A. Unfreeze the Meta-Learner
+                for param in self.meta_learner.parameters():
+                    param.requires_grad = True
 
-                # Initialize weights to [0.5, 0.5] so it starts as a perfect average
-                nn.init.constant_(self.meta_learner.weight, 0.5)
-                nn.init.constant_(self.meta_learner.bias, 0.0)
+                # B. Unfreeze the top of the WSI Expert (ABMIL Attention & Head)
+                for name, param in self.wsi_net.named_parameters():
+                    if "attention" in name or "head" in name:
+                        param.requires_grad = True
+
+                # C. Unfreeze the top of the RNA Expert (Final Predictor Layer)
+                # Note: Adjust 'net.6' if your final TMBNet layer has a different name
+                for name, param in self.tabular_net.named_parameters():
+                    if "net.6" in name or "predictor" in name:
+                        param.requires_grad = True
 
             def forward(self, image, tabular):
                 B = tabular.size(0)

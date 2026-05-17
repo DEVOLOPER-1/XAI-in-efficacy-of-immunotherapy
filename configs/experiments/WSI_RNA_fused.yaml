@@ -44,12 +44,13 @@ model:
     image_dim: 1024
     tabular_model_path: "freezed-models/runs/checkpoints/dnn_genetic_paper-epch:60-batch:32-lr:1e-3-droprate:0.4_weights.pth"
     wsi_model_path: "/home/maro/final-projects/DSAI_305_XAI/logs/runs/checkpoints/Gnet_unfrozen_2layers+AttentionMIL-btch_16-lr_1e-5-log1p_true_fixed_final_weights.pth"
+    stage1_weights_path: "freezed-models/runs/checkpoints/wsi-rna-epch:60-lr:1e-2-dr:0.3-non_linear_late_fusion-huber_delta:.1_weights.pth"
 
 training:
   save_dir: freezed-models/runs/checkpoints
   epochs: 60
   val_every: 1
-  lr: 0.01
+  lr: 0.000005
   weight_decay: 0.0001
 
   huber_delta: 0.1
@@ -58,7 +59,7 @@ training:
   risk_threshold:  10
   upload_pickled_model: true
 wandb:
-    run_name: "wsi-rna-epch:60-lr:1e-2-dr:0.3-late_fusion-huber_delta:.1"
+    run_name: "wsi-rna-epch:60-lr:5e-6-dr:0.3-non_linear_late_fusion_phase2-huber_delta:.1"
     tags:
         - COAD
         - pathological_genetic
@@ -66,3 +67,5 @@ wandb:
         - paper_architecture
         - Gnet_features
         - late_fusion
+        - non_linear_meta_learner
+        - phase_2
