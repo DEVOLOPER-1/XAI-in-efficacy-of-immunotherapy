@@ -43,3 +43,6 @@ model:
 wandb:
     entity: "mohamed-mourad-zewail-city"
     project_name: "TMB-prediction"
+
+explainability:
+    methods: # handeled automattically by the auto_audit mode

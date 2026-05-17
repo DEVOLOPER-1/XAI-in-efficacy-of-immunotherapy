@@ -148,7 +148,63 @@ def _mode_eval(cfg_path: str, args: argparse.Namespace) -> None:
         print(f"  {key:<15}: {value:.4f}")
     print("─────────────────────────────────────────────────────\n")
 
+def _mode_auto_audit(cfg_path: str, args: argparse.Namespace) -> None:
+    """Intelligently runs both Tabular and Image XAI in two isolated memory passes."""
+    import gc
+    import torch
+    from src.config import load_config
+    from src.inference import evaluate
 
+    log = logging.getLogger(__name__)
+    split = args.split or "test"
+
+    # Load base configuration
+    cfg = load_config(cfg_path)
+
+    # Inject explicit checkpoint if provided
+    if getattr(args, "checkpoint", None):
+        if not hasattr(cfg, "training"):
+            from src.config import DotDict
+
+            cfg.training = DotDict({})
+        cfg.training.checkpoint_path = args.checkpoint
+
+    log.info("🚀 STARTING AUTO-AUDIT: Two-Stage Memory-Isolated Execution")
+
+    # ==========================================================
+    # STAGE 1: The Genetic Explanations (Fast & Lightweight)
+    # ==========================================================
+    log.info("========== STAGE 1: Tabular Explanations (SHAP/LIME) ==========")
+    cfg.dataset.use_preextracted = True
+    cfg.explainability.methods = ["shap", "lime", "pdp", "ice", "ace"]
+
+    try:
+        evaluate(cfg, split=split)
+    except Exception as e:
+        log.error(f"Stage 1 failed: {e}")
+
+    # ==========================================================
+    # MEMORY PURGE (The Intelligent Step)
+    # ==========================================================
+    log.info("🧹 Purging RAM and VRAM before loading Image CNN...")
+    gc.collect()  # Force Python to delete orphaned SHAP matrices
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()  # Force PyTorch to release VRAM
+        torch.cuda.ipc_collect()
+
+    # ==========================================================
+    # STAGE 2: The Pathological Explanations (Heavy CNN)
+    # ==========================================================
+    log.info("========== STAGE 2: Pathological Explanations (Grad-CAM) ==========")
+    cfg.dataset.use_preextracted = False
+    cfg.explainability.methods = ["gradcam"]
+
+    try:
+        evaluate(cfg, split=split)
+    except Exception as e:
+        log.error(f"Stage 2 failed: {e}")
+
+    log.info("✅ AUTO-AUDIT COMPLETE. All artifacts saved.")
 
 def _mode_predict(cfg_path: str, args: argparse.Namespace) -> None:
     """Run the explainability pipeline and export a submission CSV manifest.
@@ -260,9 +316,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mode",
         "-m",
-        choices=["train", "eval", "predict", "info"],
+        choices=["train", "eval", "predict", "info", "auto_audit"],
         default="train",
-        help="Execution mode (train | eval | predict | info; default: train)",
+        help="Execution mode (train | eval | predict | info | auto_audit; default: train)",
     )
     parser.add_argument(
         "--split",
@@ -323,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         "eval": _mode_eval,
         "predict": _mode_predict,
         "info": _mode_info,
+        "auto_audit": _mode_auto_audit,  # <-- Added here
     }
 
     try:
