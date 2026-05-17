@@ -12,6 +12,7 @@ modalities:
 # ── Dataset Configuration ──────────────────────────────────────────────────
 dataset:
   target_col: "TMB_NONSYNONYMOUS"
+  use_preextracted: false   # REQUIRED: Model uses ResNet18 backbone, needs raw tiles
   image_size: 224           # ResNet input size
   max_patches: 16           # Tiles per slide (paper uses variable, we fix for batching)
   batch_size: 16            # Reduced due to MCB memory overhead
@@ -36,7 +37,7 @@ model:
   freeze_backbone: true     # Start frozen; unfreeze later for fine-tuning
   
   # MCB fusion settings (paper defaults)
-  mcb_output_dim: 8000      # Compact bilinear output dimension
+  mcb_output_dim: 2048      # Compact bilinear output dimension
   clinical_embed_dim: 128   # Clinical feature embedding size
   fusion_embed_dim: 512     # Post-fusion projection dimension
   
@@ -45,13 +46,13 @@ model:
   
   # ── Feature Selection for Clinical Features ──────────────────────────
   select_clinical_features: false    # Enable learnable feature selection
-  target_k_features: 20             # Encourage selecting ~10 important features
+  target_k_features: 10             # Encourage selecting ~10 important features
   feature_selection_weight: 0.01    # L1 sparsity regularization weight
   
   # Optimizer defaults (training section takes precedence)
   learning_rate: 1e-4
-  epochs: 50
-  clinical_input_dim: 8
+  epochs: 100
+  clinical_input_dim: 20
 # ── Training Hyperparameters ───────────────────────────────────────────────
 training:
   epochs: 50
