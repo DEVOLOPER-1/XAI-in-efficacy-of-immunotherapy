@@ -268,7 +268,7 @@ class HuangMMDL(_TorchBase):
                 self.select = select
 
             def forward(self, x: torch.Tensor) -> torch.Tensor:
-                x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+                x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0) #imputing null values by zeros
                 if self.select and self.selector is not None:
                     x = self.selector(x)
                 return self.project(x)
