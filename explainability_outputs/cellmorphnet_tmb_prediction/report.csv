@@ -1,5 +1,0 @@
-patient_id,modality,method,path,note
-TCGA-5M-AAT4,image,shap,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_shap.png,Raw-image gradient SHAP
-TCGA-5M-AAT4,image,lime,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_lime.png,Raw-image local explanation
-TCGA-5M-AAT4,image,gradcam,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_gradcam.png,Raw-image gradient CAM
-TCGA-5M-AAT4,image,pdp_ice_ace,explainability_outputs/cellmorphnet_tmb_prediction/image/raw/image_effects.png,Image perturbation curves
