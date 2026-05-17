@@ -11,12 +11,16 @@ dataset:
   # TMB is extremely heavy-tailed (median 3.17, max 433) → log1p stabilises gradients.
   # Without this the loss is dominated by outliers and R² stays negative.
   log1p_target: true        # Apply log1p(TMB) before computing loss
-  # Memory budget: batch_size=16 × max_patches=16 = 256 tiles per step
+  # CellMorphNet processes RAW tiles — its own CNN backbone does the feature extraction.
+  # Set use_preextracted: false so SlideStore loads PNGs from images/ (not .npy from features/).
+  use_preextracted: false   # REQUIRED: CellMorphNet has its own backbone, needs raw tiles
+  # Memory budget: batch_size=12 × max_patches=16 = 192 tiles per step
   max_patches: 16           # Use all available tiles (most patients have exactly 16)
   image_size: 224           # Standard 224×224 patch size (20× magnification)
-  batch_size: 12            # Reduced to fit 16 tiles × 16 slides in VRAM
+  batch_size: 12            # Reduced to fit 16 tiles × 12 slides in VRAM
   val_ratio: 0.15
   seed: 42
+
 
 # ── Model Configuration ────────────────────────────────────────────────────
 model:
