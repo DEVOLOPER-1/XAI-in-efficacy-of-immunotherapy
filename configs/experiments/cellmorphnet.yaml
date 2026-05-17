@@ -54,6 +54,7 @@ training:
   scheduler: "CosineAnnealing"
   scheduler_T_max: 100      # Full cosine cycle = total epochs
   scheduler_eta_min: 1.0e-6 # Minimum LR floor
+  risk_threshold: 10.0        # TMB cutoff for AUROC/AUPRC computation
 
 # ── W&B Configuration ──────────────────────────────────────────────────────
 wandb:

@@ -99,7 +99,7 @@ training:
   upload_pickled_model: false
 
   # Risk stratification
-  risk_threshold: 27.0                   # TMB-H cutoff for AUROC/AUPRC metrics
+  risk_threshold: 10.0        # TMB cutoff for AUROC/AUPRC computation
 
 # ── Weights & Biases configuration ─────────────────────────────────────────
 wandb:

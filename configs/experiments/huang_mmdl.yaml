@@ -44,8 +44,8 @@ model:
   dropout: 0.2              # Paper uses 0.2 dropout
   
   # ── Feature Selection for Clinical Features ──────────────────────────
-  select_clinical_features: true    # Enable learnable feature selection
-  target_k_features: 10             # Encourage selecting ~10 important features
+  select_clinical_features: false    # Enable learnable feature selection
+  target_k_features: 20             # Encourage selecting ~10 important features
   feature_selection_weight: 0.01    # L1 sparsity regularization weight
   
   # Optimizer defaults (training section takes precedence)
@@ -73,7 +73,7 @@ training:
   upload_pickled_model: false
   
   # Risk threshold for derived classification metrics (optional)
-  risk_threshold: 27.0        # TMB cutoff for AUROC/AUPRC computation
+  risk_threshold: 10.0        # TMB cutoff for AUROC/AUPRC computation
 
 # ── Weights & Biases Configuration ─────────────────────────────────────────
 wandb:
