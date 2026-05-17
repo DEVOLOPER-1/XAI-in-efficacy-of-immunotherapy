@@ -12,11 +12,12 @@ Three model categories
                  Config: model.category: image_only
 
   Fusion       — receives both modalities and merges them.
-                 Two sub-strategies controlled by model.fusion_strategy:
-                   early  — concatenate features before the final head
-                   late   — independent heads, combine predictions
+                 Registry key is model.type (e.g. huang_mmdl, wsi_rna_mcb).
+                 Legacy configs that used model.fusion_strategy are still
+                 supported as a fallback selector.
                  Config: model.category: fusion
-                         model.fusion_strategy: early | late
+                         model.type: huang_mmdl | wsi_rna_mcb | ...
+                         model.fusion_strategy: legacy alias (optional)
 
 How to register a new model
 ────────────────────────────
@@ -39,10 +40,10 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable, Callable
+import logging
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from src.config import DotDict
-
 
 # ---------------------------------------------------------------------------
 # Unified model protocol
@@ -210,7 +211,15 @@ def _load_wsi_rna_mcb(cfg: DotDict) -> Any:
             "MCBFusionNet requires PyTorch: uv pip install torch"
         ) from exc
 
-
+def _load_huang_mmdl(cfg: DotDict) -> Any:
+    """Huang et al. (2022) multi-modal MCB fusion model for TMB regression."""
+    try:
+        from src.models.huang_mmdl import HuangMMDL
+        return HuangMMDL(cfg)
+    except ImportError as exc:
+        raise ImportError(
+            "HuangMMDL requires PyTorch & torchvision: uv pip install torch torchvision"
+        ) from exc
 
 # ---------------------------------------------------------------------------
 # Sub-registries
@@ -246,6 +255,7 @@ _IMAGE_REGISTRY: dict[str, Any] = {
 
 _FUSION_REGISTRY: dict[str, Any] = {
     "wsi_rna_mcb": _load_wsi_rna_mcb,
+    "huang_mmdl": _load_huang_mmdl,
     # "early": _load_early_fusion,  # TODO: implement EarlyFusionModel in src/models/fusion.py
     # "late":  _load_late_fusion,   # TODO: implement LateFusionModel in src/models/fusion.py
 }
@@ -268,7 +278,8 @@ def get_model(cfg: DotDict) -> CancerModelProtocol:
     Reads:
         cfg.model.category        — "tabular_only" | "image_only" | "fusion"
         cfg.model.type            — e.g. "xgboost", "abmil", "resnet", …
-        cfg.model.fusion_strategy — "early" | "late"  (fusion category only)
+        cfg.model.type            — fusion registry key (preferred)
+        cfg.model.fusion_strategy — legacy alias (fallback for older configs)
 
     Args:
         cfg: Merged experiment config (from src.config.load_config).
@@ -283,10 +294,8 @@ def get_model(cfg: DotDict) -> CancerModelProtocol:
     Example YAML:
         model:
           category: fusion
-          type: resnet              # image branch backbone
-          fusion_strategy: early
-          tabular_dim: 128          # passed to the fusion model
-          image_dim: 512
+          type: huang_mmdl          # fusion registry key
+          fusion_strategy: huang_mmdl  # optional legacy alias
 
         model:
           category: tabular_only
@@ -313,14 +322,19 @@ def get_model(cfg: DotDict) -> CancerModelProtocol:
 
     # -- Resolve the registry key -------------------------------------------
     if category == "fusion":
-        # For fusion, the key is the fusion_strategy (early / late)
-        strategy = (model_cfg.get("fusion_strategy") or "early").lower().strip()
-        if strategy not in registry:
+        # Prefer the explicit fusion model type; fall back to legacy strategy.
+        key = (model_cfg.get("type") or "").lower().strip()
+        if not key:
+            key = (model_cfg.get("fusion_strategy") or "").lower().strip()
+        if not key:
+            raise AttributeError(
+                "cfg.model.type is required for fusion category experiments."
+            )
+        if key not in registry:
             raise ValueError(
-                f"Unknown model.fusion_strategy '{strategy}'. "
+                f"Unknown model.type / model.fusion_strategy '{key}' for category 'fusion'. "
                 f"Choose from: [{', '.join(sorted(registry))}]."
             )
-        key = strategy
     else:
         # For tabular_only / image_only, the key is model.type
         key = (model_cfg.get("type") or "").lower().strip()
@@ -376,7 +390,5 @@ def _warn_modality_mismatch(category: str, mod_cfg: DotDict) -> None:
             "disabled modality — ensure your fusion model handles this.",
             use_image, use_tabular,
         )
-
-
-import logging
 log = logging.getLogger(__name__)
+
