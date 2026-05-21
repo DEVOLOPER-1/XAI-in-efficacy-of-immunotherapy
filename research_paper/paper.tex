@@ -364,25 +364,37 @@ Grad-CAM is available from the Shimada InceptionV3 model (3 patients: TCGA-5M-AA
 \label{fig:cell_deconv}
 \end{figure}
 
-\subsection{Feature Importance Rankings: Tabular vs. Fusion Comparison}
+\subsection{Local Feature Attribution: Transcriptomic vs. Fusion Architectures}
 \label{subsec:feature_importance}
-\begin{table}[H]
-\centering
-\caption{Top Tabular Features: Standalone vs. Fusion SHAP Importance}
-\small
-\begin{tabular}{|l|c|c|c|}
-\hline
-\textbf{Feature} & \textbf{Tabular-only} & \textbf{Fusion} & \textbf{Change (\%)} \\
-\hline
-\relax Pending (Top Feature 1) & Pending & Pending & Pending \\
-\relax Pending (Top Feature 2) & Pending & Pending & Pending \\
-\relax Pending (Top Feature 3) & Pending & Pending & Pending \\
-\hline
-\multicolumn{4}{l}{\small Negative \% indicates reduced reliance on genomics when morphology is added.} \\
-\hline
-\end{tabular}
-\label{tab:feature_shift}
-\end{table}
+
+To understand how the integration of spatial pathology alters our framework's reliance on genomic markers, we generated local SHAP waterfall plots for individual patients across both architectures. Rather than observing global feature means, isolating a single prediction allows us to quantify the exact mathematical shift in modality weighting.
+
+Figure \ref{fig:shap_comparison} illustrates this phenomenon for patient TCGA-A6-2682, a case with a clinically low True TMB of 2.13 Mut/Mb.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2682/tabular_shap_local.png}
+        \caption{Standalone Transcriptomic DNN}
+        \label{fig:shap_dnn}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{explainability_outputs/pathological_genetic_fused/tabular/TCGA-A6-2682/tabular_shap_local.png}
+        \caption{Non-Linear Late Fusion}
+        \label{fig:shap_fused}
+    \end{subfigure}
+    \caption{Local SHAP attribution for patient TCGA-A6-2682 (True TMB: 2.13). The integration of WSI features in the fusion model (b) substantially compresses the baseline expected value $E[f(X)]$ and the magnitude of individual genomic SHAP values compared to the standalone baseline (a), resulting in a more calibrated final prediction $f(x)$.}
+    \label{fig:shap_comparison}
+\end{figure}
+
+The comparison yields two critical insights into the behavior of our non-linear late fusion meta-learner. First, the biological ranking of the transcriptomic features remains highly stable across both models; \textit{PIAS2}, \textit{SEMG2}, and \textit{POU5F2} are consistently identified as the primary drivers suppressing the predicted TMB value. This consistency validates the robustness of our feature selection pipeline and confirms that the fusion network does not catastrophically forget the genomic signature.
+
+Second, we observe a distinct "magnitude compression" in the fusion model. In the standalone DNN (Figure \ref{fig:shap_dnn}), the baseline expected value of the training cohort is high ($E[f(X)] = 12.241$). Consequently, the transcriptomic features must exert extreme negative adjustments (e.g., \textit{PIAS2} contributing $-2.8$) to drag the prediction down, ultimately overshooting the true value and landing at $f(x) = 4.507$.
+
+Conversely, in the late fusion architecture (Figure \ref{fig:shap_fused}), the baseline expected value drops to $E[f(X)] = 8.903$. Because the visual expert has already processed the WSI and provided morphological context indicating a likely low-mutation state, the genetic branch is relieved of the burden to independently correct the prediction. The magnitude of the transcriptomic SHAP values shrinks accordingly (\textit{PIAS2} drops to $-1.8$), and the final fused prediction lands at $f(x) = 2.907$, achieving a substantially lower error margin. This explicitly demonstrates that adding spatial pathology features successfully mitigates the model's over-reliance on transcriptomic data, leading to superior calibration and graceful modality sharing.
 
 % ============================================================================
 % SECTION 5: ETHICAL & LEGAL CONSIDERATIONS
@@ -462,7 +474,7 @@ To prevent unsafe automation bias, the pipeline outputs 95\% confidence interval
 Multimodal fusion consistently outperforms single-modality baselines, confirming that histopathological morphology encodes non-redundant signals complementary to genomic profiles. MCB fusion captures second-order image-tabular interactions, yielding the lowest prediction error. Image-only models, particularly adapted CellMorphNet and Shimada InceptionV3, demonstrate that spatial architecture and immune infiltration patterns are strong TMB correlates. XAI outputs align with established oncology literature: \textit{TP53} mutations, CD8+ T-cell markers, and advanced stage drive high-TMB predictions, while Grad-CAM highlights lymphocyte-rich stroma in high-TMB slides. Feature importance shifts in fusion models indicate partial redundancy between genomics and morphology, suggesting that high-quality WSIs may reduce reliance on expensive sequencing in resource-limited settings.
 
 \subsection{Limitations \& Future Work}
-This study is constrained by limited validation patients and a single cancer type (STAD), limiting generalisability. Hardware limitations necessitated architectural adaptations (reduced tile counts, lower MCB sketch dimensions, simplified HCRA routing), which may cap peak performance. Scanner-specific staining variability and cross-site domain shifts remain unaddressed. Future work will prioritise external multi-institutional validation, domain adaptation for multi-scanner deployment, temporal survival analysis, and intersectional fairness audits. Integration of additional omics (methylation, proteomics) and prospective clinical trials validating predicted TMB against ICI response are critical next steps.
+This study is constrained by limited validation patients and a single cancer type (COAD), limiting generalisability. Hardware limitations necessitated architectural adaptations (reduced tile counts, lower MCB sketch dimensions, simplified HCRA routing), which may cap peak performance. Scanner-specific staining variability and cross-site domain shifts remain unaddressed. Future work will prioritise external multi-institutional validation, domain adaptation for multi-scanner deployment, temporal survival analysis, and intersectional fairness audits. Integration of additional omics (methylation, proteomics) and prospective clinical trials validating predicted TMB against ICI response are critical next steps.
 
 \subsection{Reproducibility \& Team Contributions}
 All experiments are driven by YAML configuration files with explicit hyperparameter placeholders. Dependency versions are locked via \texttt{uv.lock}. Experiment tracking uses Weights \& Biases (W\&B) with git commit SHAs for full auditability. The modular codebase supports drop-in replacement of backbones, fusion layers, and XAI methods. Team governance follows \texttt{STANDARDS.md} with strict branching, code review, and documentation protocols.
