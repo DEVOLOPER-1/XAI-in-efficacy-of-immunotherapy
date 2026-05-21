@@ -182,8 +182,19 @@ Based on Xu et al. \cite{xu2024cellmorphnet}, we implement a swin-transformer-st
 \subsection{Fusion Architectures: Combining Pathology + Genomics}
 \label{subsec:fusion}
 
-\subsubsection{Late Fusion Network (Modality-Independent Heads)}
-Image branch (GoogleNet features, 1024-D) and tabular branch (21 genomic/clinical features) each produce independent predictions via MLP heads. Fusion: non-linear meta-learner combining both. Dropout: 0.3, MCB output dim: 512. Optimiser: AdamW, LR=$5\times10^{-6}$, weight decay=$1\times10^{-4}$. Huber loss $\delta=0.1$. Epochs: 60, validate every epoch. Pre-extracted image features (\texttt{use\_preextracted=true}), patch size 256, max 16 patches, image size 224.
+\subsubsection{Multimodal Integration: Non-Linear Late Fusion}
+To combine the distinct spatial and molecular representations while strictly preserving modality independence for explainability, we implemented a decision-level, non-linear late fusion architecture. The pipeline integrates two independently pre-trained unimodal experts: the transcriptomic Deep Neural Network (DNN) and the GoogLeNet-based ABMIL image expert.
+
+Rather than relying on simple linear averaging or mathematically opaque bilinear pooling (e.g., MCB), our fusion strategy employs a dedicated non-linear meta-learner. The scalar continuous TMB predictions from the WSI expert and the RNA expert are concatenated into a 2-dimensional vector. This vector is passed through a hidden fully connected layer comprising 8 neurons with a ReLU activation function, followed by a final linear projection to a unified TMB prediction. This meta-learning approach enables the model to capture non-linear synergies between modalities—such as learning when to trust the genomic signature over ambiguous histology—without entangling the underlying feature representations.
+
+\subsubsection{Two-Phase Multimodal Training Protocol}
+To optimize the fusion network and prevent the destabilization of the pre-trained unimodal experts, the late fusion architecture was trained using a rigorous, two-phase protocol over 120 total epochs (batch size 32). The target variable remained the raw continuous TMB value (\texttt{log1p\_target=false}), optimized using the AdamW optimizer (weight decay $1\times 10^{-4}$) and Huber loss ($\delta=0.1$) to handle clinical outliers.
+
+\begin{enumerate}
+    \item \textbf{Phase 1: Meta-Learner Initialization:} In the first stage (60 epochs), the weights of both the GoogLeNet-ABMIL and the transcriptomic DNN were completely frozen. Training was strictly isolated to the non-linear meta-learner. Using a relatively high learning rate of $1\times 10^{-2}$ and a dropout rate of 0.3, the meta-learner rapidly learned to optimally weight and combine the converged predictions of the independent experts.
+
+    \item \textbf{Phase 2: Gentle End-to-End Fine-Tuning:} Following the convergence of the meta-learner, we initiated a controlled, partial unfreezing of the network for the remaining 60 epochs. To refine cross-modal calibration without causing catastrophic forgetting, we unfrozen only the terminal layers of the expert modules: the ABMIL attention mechanism and regression head in the image expert, and the final predictor layer in the RNA expert. The learning rate was aggressively decayed to $1\times 10^{-4}$ during this phase, allowing the model to make subtle, coordinated adjustments to both spatial attention and genomic feature mapping while the meta-learner continued to train.
+\end{enumerate}
 
 \subsubsection{Huang MMDL: Multimodal Compact Bilinear Fusion (Adapted)}
 Based on Huang et al. \cite{huang2022}, the image branch uses ResNet18 backbone ($224\times224$ tiles, max 16/patient, batch 16). Tabular branch: 20 clinical features projected to 128-D. MCB output: 2048-D compact bilinear representation. Post-fusion projection: 512-D. Dropout: 0.2. Backbone initially frozen; differential LR: backbone $1\times10^{-5}$, head $1\times10^{-4}$. Weight decay: $1\times10^{-4}$, gradient clip: 1.0. Scheduler: ReduceLROnPlateau (patience=10, factor=0.5). Target: $\log(1+\text{TMB})$ with standardisation ($\mu=2.71$, $\sigma=1.30$). Epochs: 50.
