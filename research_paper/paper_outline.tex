@@ -1,5 +1,5 @@
 \documentclass[11pt,a4paper]{article}
-\usepackage[utf-8]{inputenc}
+\usepackage[utf8]{inputenc}
 \usepackage[margin=1in]{geometry}
 \usepackage{graphicx}
 \usepackage{amsmath}
@@ -11,6 +11,18 @@
 \usepackage{cite}
 \usepackage{subcaption}
 \usepackage{float}
+
+% Ensure fancyhdr has enough headroom to avoid \headheight warnings
+\setlength{\headheight}{14.5pt}
+
+% Safe include: only include graphic if file exists, otherwise draw a framed
+% placeholder. Usage: \includeGraphicIfExists[<keyvals>]{<filename>}.
+% Use \DeclareRobustCommand and \detokenize to avoid issues when writing aux/bookmarks
+\DeclareRobustCommand{\includeGraphicIfExists}[2][]{%
+  \IfFileExists{#2}{\includegraphics[#1]{#2}}{%
+	\fbox{\parbox[c][5em][c]{0.9\linewidth}{\centering\textbf{Missing figure:} \detokenize{#2}}}%
+  }%
+}
 
 % For better table formatting
 \usepackage{array}
@@ -394,26 +406,26 @@ Lasso Regressor & Tabular-only & 2.71 & 1.92 & 0.51 & 0.71 & 0.58 & 0.59 & <1s \
 \centering
 \begin{subfigure}{0.32\textwidth}
 \centering
-% Placeholder for ROC — Tabular models
-\includegraphics[width=\textwidth]{fig_placeholder_roc_tabular.pdf}
+	% Placeholder for ROC — Tabular models
+	\includeGraphicIfExists[width=\textwidth]{fig_placeholder_roc_tabular.pdf}
 \caption{Tabular-only: Lasso, DT, RF, GBT}
 \label{fig:roc_tabular}
 \end{subfigure}
 \begin{subfigure}{0.32\textwidth}
 \centering
-% Placeholder for ROC — Image models
-\includegraphics[width=\textwidth]{fig_placeholder_roc_image.pdf}
+	% Placeholder for ROC — Image models
+	\includeGraphicIfExists[width=\textwidth]{fig_placeholder_roc_image.pdf}
 \caption{Image-only: GoogleNet, Inception, CellMorphNet}
 \label{fig:roc_image}
 \end{subfigure}
 \begin{subfigure}{0.32\textwidth}
 \centering
-% Placeholder for ROC — Fusion models
-\includegraphics[width=\textwidth]{fig_placeholder_roc_fusion.pdf}
+	% Placeholder for ROC — Fusion models
+	\includeGraphicIfExists[width=\textwidth]{fig_placeholder_roc_fusion.pdf}
 \caption{Fusion: Late, MMDL (+ GBT baseline)}
 \label{fig:roc_fusion}
 \end{subfigure}
-\caption{Figure 1: Risk Stratification Performance (AUROC at TMB ≥10 Mut/Mb threshold).
+\caption{Figure 1: Risk Stratification Performance (AUROC at TMB $\geq$ 10 Mut/Mb threshold).
 Grouped by model category to maintain readability. Diagonal dashed line: random classifier (AUC=0.50).
 MMDL achieves AUC=0.79; Late Fusion AUC=0.76; best tabular (GBT) AUC=0.73.}
 \label{fig:roc_grouped}
@@ -438,15 +450,15 @@ MMDL achieves AUC=0.79; Late Fusion AUC=0.76; best tabular (GBT) AUC=0.73.}
 \centering
 \begin{subfigure}{0.48\textwidth}
 \centering
-% SHAP summary plot: bar chart of mean |SHAP| per feature
-\includegraphics[width=\textwidth]{fig_placeholder_shap_summary.pdf}
+	% SHAP summary plot: bar chart of mean |SHAP| per feature
+	\includeGraphicIfExists[width=\textwidth]{fig_placeholder_shap_summary.pdf}
 \caption{SHAP Mean |Impact| Summary (all eval patients, top 15 features)}
 \label{fig:shap_summary}
 \end{subfigure}
 \begin{subfigure}{0.48\textwidth}
 \centering
-% LIME local explanation for one high-TMB patient
-\includegraphics[width=\textwidth]{fig_placeholder_lime_local.pdf}
+	% LIME local explanation for one high-TMB patient
+	\includeGraphicIfExists[width=\textwidth]{fig_placeholder_lime_local.pdf}
 \caption{LIME Local Explanation: Patient P42 (True TMB=18.5 Mut/Mb, Pred=17.8)}
 \label{fig:lime_local}
 \end{subfigure}
@@ -469,7 +481,7 @@ These match oncology knowledge: TP53-mutant tumors are immunogenic; CD8+ infiltr
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.8\textwidth]{fig_placeholder_pdp_curves.pdf}
+	\includeGraphicIfExists[width=0.8\textwidth]{fig_placeholder_pdp_curves.pdf}
 \caption{Figure 3: Partial Dependence Plots (PDP) for Top-3 Most Important Features.
 Each curve shows how model predictions change across feature values (holding others at mean).
 (Left) TP53 mutation status: dramatic jump in predicted TMB when TP53 mutated (discrete feature).
@@ -491,15 +503,15 @@ Clinical insight: PDP curves reveal clinical decision thresholds (e.g., CD8A cut
 \centering
 \begin{subfigure}{0.48\textwidth}
 \centering
-% Grad-CAM heatmap overlaid on WSI tile for high-TMB patient
-\includegraphics[width=\textwidth]{fig_placeholder_gradcam_high_tmb.pdf}
+	% Grad-CAM heatmap overlaid on WSI tile for high-TMB patient
+	\includeGraphicIfExists[width=\textwidth]{fig_placeholder_gradcam_high_tmb.pdf}
 \caption{Grad-CAM: High-TMB Patient (True=16 Mut/Mb). Red=high activation.}
 \label{fig:gradcam_high}
 \end{subfigure}
 \begin{subfigure}{0.48\textwidth}
 \centering
-% Grad-CAM heatmap for low-TMB patient
-\includegraphics[width=\textwidth]{fig_placeholder_gradcam_low_tmb.pdf}
+	% Grad-CAM heatmap for low-TMB patient
+	\includeGraphicIfExists[width=\textwidth]{fig_placeholder_gradcam_low_tmb.pdf}
 \caption{Grad-CAM: Low-TMB Patient (True=3 Mut/Mb). Blue=low activation.}
 \label{fig:gradcam_low}
 \end{subfigure}
@@ -512,7 +524,7 @@ Spatial pattern recognition explains why image modality adds predictive value be
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.8\textwidth]{fig_placeholder_cell_deconv.pdf}
+	\includeGraphicIfExists[width=0.8\textwidth]{fig_placeholder_cell_deconv.pdf}
 \caption{Figure 4c: CellMorphNet Cell-Type Deconvolution.
 Per-patient cell-type composition (T-cells, macrophages, tumor, fibroblasts, …)
 extracted from bag-of-tiles features via matrix factorization.
@@ -592,19 +604,19 @@ Stage (III vs I) & 0.88 & 0.67 & -23.9\% \\
 \small
 \begin{tabular}{|l|c|c|c|c|c|c|}
 \hline
-\textbf{Subgroup} & \textbf{n} & \textbf{RMSE} & \textbf{AUROC} & \textbf{Δ RMSE*} & \textbf{p-value} & \textbf{Disparity} \\
+\textbf{Subgroup} & \textbf{n} & \textbf{RMSE} & \textbf{AUROC} & \textbf{\(\Delta\) RMSE*} & \textbf{p-value} & \textbf{Disparity} \\
 \hline
-Overall & 42 & 1.23 & 0.79 & — & — & Baseline \\
-Male & 28 & 1.19 & 0.81 & -0.04 & 0.73 & ✓ Acceptable \\
-Female & 14 & 1.31 & 0.76 & +0.08 & 0.73 & ✓ Acceptable \\
-Age ≤50 & 18 & 1.15 & 0.82 & -0.08 & 0.62 & ✓ Acceptable \\
-Age >50 & 24 & 1.28 & 0.77 & +0.05 & 0.62 & ✓ Acceptable \\
-Race: Caucasian & 30 & 1.20 & 0.80 & -0.03 & 0.81 & ✓ Acceptable \\
-Race: Asian/Other & 12 & 1.29 & 0.78 & +0.06 & 0.81 & ✓ Acceptable \\
-Early Stage (I–II) & 20 & 1.41 & 0.74 & +0.18 & 0.15 & ⚠ Monitor \\
-Late Stage (III–IV) & 22 & 1.08 & 0.83 & -0.15 & 0.15 & ⚠ Monitor \\
+Overall & 42 & 1.23 & 0.79 & -- & -- & Baseline \\
+Male & 28 & 1.19 & 0.81 & -0.04 & 0.73 & Acceptable \\
+Female & 14 & 1.31 & 0.76 & +0.08 & 0.73 & Acceptable \\
+Age $\leq$50 & 18 & 1.15 & 0.82 & -0.08 & 0.62 & Acceptable \\
+Age >50 & 24 & 1.28 & 0.77 & +0.05 & 0.62 & Acceptable \\
+Race: Caucasian & 30 & 1.20 & 0.80 & -0.03 & 0.81 & Acceptable \\
+Race: Asian/Other & 12 & 1.29 & 0.78 & +0.06 & 0.81 & Acceptable \\
+Early Stage (I--II) & 20 & 1.41 & 0.74 & +0.18 & 0.15 & Monitor \\
+Late Stage (III--IV) & 22 & 1.08 & 0.83 & -0.15 & 0.15 & Monitor \\
 \hline
-\multicolumn{7}{l}{* Δ RMSE = subgroup RMSE - overall RMSE. Negative = better performance in subgroup.} \\
+\multicolumn{7}{l}{* \(\Delta\) RMSE = subgroup RMSE - overall RMSE. Negative = better performance in subgroup.} \\
 \multicolumn{7}{l}{\small p-value: Welch's t-test for equal mean performance. Threshold: p<0.05 flags significant disparity.} \\
 \multicolumn{7}{l}{\small Stage disparity (0.33 RMSE difference) warrants investigation: model may underfit low-mutation early-stage cases.} \\
 \hline
@@ -696,10 +708,10 @@ Model weights & indefinite & Version control (git) & Non-sensitive (aggregate pa
 \hline
 \textbf{Pred. TMB} & \textbf{95\% CI} & \textbf{Width} & \textbf{Risk Level} & \textbf{Confidence} & \textbf{Recommendation} \\
 \hline
-15.2 & [14.1, 16.3] & 1.2 & High & ✓ High & Order immunotherapy panel \\
-9.8 & [7.2, 12.4] & 5.2 & Medium & ⚠ Low & Confirm with independent assay (WES?) \\
-3.5 & [2.8, 4.2] & 1.4 & Low & ✓ High & Consider standard chemotherapy first \\
-8.1 & [6.1, 10.1] & 4.0 & Medium & ⚠ Low & Physician discretion; need additional biomarkers \\
+15.2 & [14.1, 16.3] & 1.2 & High & High & Order immunotherapy panel \\
+9.8 & [7.2, 12.4] & 5.2 & Medium & Low & Confirm with independent assay (WES?) \\
+3.5 & [2.8, 4.2] & 1.4 & Low & High & Consider standard chemotherapy first \\
+8.1 & [6.1, 10.1] & 4.0 & Medium & Low & Physician discretion; need additional biomarkers \\
 \hline
 \multicolumn{6}{l}{\small Width of CI indicates epistemic uncertainty: narrow CI $\Rightarrow$ model confident; wide CI $\Rightarrow$ ambiguous, recommend clinical review.} \\
 \hline
