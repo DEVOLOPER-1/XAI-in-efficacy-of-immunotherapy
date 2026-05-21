@@ -18,7 +18,7 @@
 
 % Title and author info
 \title{WhiteBox: Explainable Tumour Mutational Burden Prediction from Multimodal Cancer Data}
-\author{DSAI 305 Explainability and Interpretability in AI Research Team 10}
+\author{DSAI 305 Explainability and Interpretability in AI Capstone Research Team 10}
 \date{\today}
 \pagestyle{fancy}
 \fancyhf{}
@@ -58,13 +58,13 @@ The deployment of artificial intelligence in clinical oncology is constrained no
 \label{sec:related_work}
 
 \subsection{Genomic and Transcriptomic TMB Prediction Baselines}
-Early computational approaches to TMB prediction relied exclusively on genomic, transcriptomic, and clinical tabular data. Recent advances have utilized RNA-seq expression profiles to construct continuous prediction models; for instance, Hu et al. [cite: 1] developed a Deep Neural Network (DNN) optimized via genetic algorithms to predict TMB based on the mRNA expression of 31 selected genes[cite: 25, 126, 127]. Evaluated on gastrointestinal cancers, their transcriptomic model demonstrated strong predictive capability, achieving a Pearson correlation coefficient ($r$) of 0.92 and an $R^2$ of 0.70 on the testing set. However, unimodal models trained solely on bulk sequencing data ultimately plateau due to the absence of spatial tumour heterogeneity. While techniques leveraging feature selection algorithms (e.g., Lasso regression) and deep neural networks effectively capture non-linear molecular relationships[cite: 125, 126, 127], they cannot observe the morphological correlates of mutational processes, such as defective DNA mismatch repair or POLE-driven hypermutation.
+Early computational approaches to TMB prediction relied exclusively on genomic, transcriptomic, and clinical tabular data. Recent advances have utilized RNA-seq expression profiles to construct continuous prediction models; for instance, Hu et al. \cite{hu2024} developed a Deep Neural Network (DNN) optimized via genetic algorithms to predict TMB based on the mRNA expression of 31 selected genes. Evaluated on gastrointestinal cancers, their transcriptomic model demonstrated strong predictive capability, achieving a Pearson correlation coefficient ($r$) of 0.92 and an $R^2$ of 0.70 on the testing set. However, unimodal models trained solely on bulk sequencing data ultimately plateau due to the absence of spatial tumour heterogeneity. While techniques leveraging feature selection algorithms (e.g., Lasso regression) and deep neural networks effectively capture non-linear molecular relationships \cite{hu2024}, they cannot observe the morphological correlates of mutational processes, such as defective DNA mismatch repair or POLE-driven hypermutation.
 
 \subsection{Deep Learning on Whole-Slide Images}
-WSI analysis has advanced significantly through multiple instance learning (MIL) and tile-based CNN aggregation. Shimada et al. \cite{shimada2021} pioneered a two-stage InceptionV3 pipeline for TMB-high classification in colorectal cancer, first filtering neoplastic tiles and then aggregating tile-level probabilities into a slide-level TMB-H index. Their model achieved an average AUC of 0.934 and identified TIL density as a key morphological correlate. More recently, Xu et al. \cite{xu2024cellmorphnet} introduced CellMorphNet, a four-stage pyramidal transformer that incorporates mathematical stain deconvolution (HED separation via the Beer-Lambert law) and a hierarchical cellular routing attention (HCRA) mechanism. CellMorphNet explicitly quantifies cell-type composition, achieving 99.2\% AUC for binary TMB classification on TCGA-LUAD. Furthermore, the efficacy of lightweight convolutional backbones in this domain was demonstrated by Wang et al., who evaluated eight deep learning architectures for multi-instance TMB classification in gastrointestinal cancers[cite: 1883]. Their study identified GoogLeNet as the optimal network for stomach adenocarcinoma (STAD), achieving a patient-level AUC of 0.75 and a post-processed accuracy of 0.71[cite: 1862].
+WSI analysis has advanced significantly through multiple instance learning (MIL) and tile-based CNN aggregation. Shimada et al. \cite{shimada2021} pioneered a two-stage InceptionV3 pipeline for TMB-high classification in colorectal cancer, first filtering neoplastic tiles and then aggregating tile-level probabilities into a slide-level TMB-H index. Their model achieved an average AUC of 0.934 and identified TIL density as a key morphological correlate. More recently, Xu et al. \cite{xu2024cellmorphnet} introduced CellMorphNet, a four-stage pyramidal transformer that incorporates mathematical stain deconvolution (HED separation via the Beer-Lambert law) and a hierarchical cellular routing attention (HCRA) mechanism. CellMorphNet explicitly quantifies cell-type composition, achieving 99.2\% AUC for binary TMB classification on TCGA-LUAD. Furthermore, the efficacy of lightweight convolutional backbones in this domain was demonstrated by Wang et al., who evaluated eight deep learning architectures for multi-instance TMB classification in gastrointestinal cancers \cite{wang2020}. Their study identified GoogLeNet as the optimal network for stomach adenocarcinoma (STAD), achieving a patient-level AUC of 0.75 and a post-processed accuracy of 0.71 \cite{wang2020}.
 
 \subsection{Multimodal Fusion Architectures}
-Multimodal fusion in computational pathology typically employs late fusion or bilinear pooling. Huang et al. \cite{huang2022} proposed a multi-modal deep learning (MMDL) framework combining ResNet-extracted H\&E features with clinical data via Multimodal Compact Bilinear (MCB) pooling. MCB approximates the outer product of image and tabular embeddings using randomized sketching, capturing second-order cross-modal interactions without explicit parameter explosion. Their model achieved an AUC of 0.817 for TMB status classification in CRC. The significant performance gains of multimodal integration were further corroborated by Li et al. in the context of gastric cancer (STAD). By utilizing a ResNet18 feature extractor fused with mRNA expression data via MCB, their multimodal model achieved an impressive AUC of 0.971, marking a substantial improvement over the 0.749 AUC achieved by their image-only baseline. Multiple studies have thus provided empirical evidence that combining morphological and transcriptomic data drastically improves TMB prediction overall.
+Multimodal fusion in computational pathology typically employs late fusion or bilinear pooling. Huang et al. \cite{huang2022} proposed a multi-modal deep learning (MMDL) framework combining ResNet-extracted H\&E features with clinical data via Multimodal Compact Bilinear (MCB) pooling. MCB approximates the outer product of image and tabular embeddings using randomized sketching, capturing second-order cross-modal interactions without explicit parameter explosion. Their model achieved an AUC of 0.817 for TMB status classification in CRC. The significant performance gains of multimodal integration were further corroborated by Li et al. \cite{li2024} in the context of gastric cancer (STAD). By utilizing a ResNet18 feature extractor fused with mRNA expression data via MCB, their multimodal model achieved an impressive AUC of 0.971, marking a substantial improvement over the 0.749 AUC achieved by their image-only baseline. Multiple studies have thus provided empirical evidence that combining morphological and transcriptomic data drastically improves TMB prediction overall.
 
 \subsection{Explainable AI in Clinical Context}
 Prior XAI applications in oncology have predominantly focused on binary classification (e.g., tumour vs. benign) using saliency maps or feature attribution. Multimodal regression XAI remains underexplored, particularly in the context of TMB prediction. Our contribution is the first integrated XAI audit for continuous multimodal TMB models, combining tabular explainability (SHAP, LIME, PDP) with visual attribution (Grad-CAM, cell-type deconvolution). We further translate Ensembl gene IDs to clinical gene symbols, enabling direct validation against oncology literature. This framework supports bias auditing, clinical threshold identification, and human-in-the-loop decision support, directly addressing regulatory demands for transparent AI deployment.
@@ -508,12 +508,28 @@ Shimada, Y., Okuda, S., Watanabe, Y., et al. (2021).
 \bibitem{xu2024cellmorphnet}
 Xu, X., Yu, F., Basheer, S., \& Kan, Z. (2024/2025).
 ``Advanced Deep Learning Framework for Cancer Cell Morphological Analysis and Tumor Mutational Burden Prediction from Histopathological Images.''
-\textit{IEEE Journal of Biomedical and Health Informatics}. DOI: 10.1109/JBHI.2025.3645411.
+\textit{IEEE Journal of Biomedical and Health Informatics}.
+DOI: 10.1109/JBHI.2025.3645411.
 
 \bibitem{huang2022}
 Huang, K., Lin, B., Liu, J., et al. (2022).
 ``Predicting colorectal cancer tumor mutational burden from histopathological images and clinical information using multi-modal deep learning.''
 \textit{Bioinformatics}, 38(22), 5108--5115.
+
+\bibitem{hu2024}
+Hu, B., Yin, G., Zhu, J., et al. (2024).
+``Continuous prediction for tumor mutation burden based on transcriptional data in gastrointestinal cancers.''
+\textit{BMC Medical Informatics and Decision Making}, 24(384).
+
+\bibitem{wang2020}
+Wang, L., Jiao, Y., Qiao, Y., et al. (2020).
+``A novel approach combined transfer learning and deep learning to predict TMB from histology image.''
+\textit{Pattern Recognition Letters}, 135, 244--248.
+
+\bibitem{li2024}
+Li, J., Liu, H., Liu, W., et al. (2024).
+``Predicting gastric cancer tumor mutational burden from histopathological images using multimodal deep learning.''
+\textit{Briefings in Functional Genomics}, 23(3), 228--238.
 
 \bibitem{fda2021}
 U.S. Food \& Drug Administration. (2021).
@@ -522,7 +538,7 @@ U.S. Food \& Drug Administration. (2021).
 
 \bibitem{hipaa}
 U.S. Department of Health \& Human Services. (2013).
-``HIPAA Privacy Rule and Public Health Activities.'' 45 CFR §164.512.
+``HIPAA Privacy Rule and Public Health Activities.'' 45 CFR \S 164.512.
 
 \bibitem{gdpr}
 European Commission. (2018).
