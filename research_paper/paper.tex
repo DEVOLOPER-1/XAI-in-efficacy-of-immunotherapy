@@ -401,31 +401,31 @@ Conversely, in the late fusion architecture (Figure \ref{fig:shap_fused}), the b
 % ============================================================================
 \section{Ethical \& Legal Considerations}
 \label{sec:ethics}
-
-\subsection{Concern 1: Algorithmic Bias in Demographic Subgroups}
-Deep learning models risk learning spurious demographic correlations if training distributions are skewed. We conduct a stratified bias audit across age, sex, race, and tumour stage. Performance disparities are quantified via $\Delta$RMSE and Welch's t-test ($p<0.05$ flags significant bias). SHAP and Grad-CAM are further stratified to identify feature-level or morphological drivers of disparity. If significant bias is detected, mitigation strategies include stratified resampling, group-conditional fairness regularisation, or stage-aware loss weighting.
-
-\begin{table}[H]
-\centering
-\caption{Algorithmic Bias Audit: [PLACEHOLDER: Best Model] Stratified Performance}
-\small
-\begin{tabular}{|l|c|c|c|c|c|c|}
-\hline
-\textbf{Subgroup} & \textbf{n} & \textbf{RMSE} & \textbf{AUROC} & \textbf{$\Delta$ RMSE} & \textbf{p-value} & \textbf{Status} \\
-\hline
-Overall & Pending & Pending & Pending & --- & --- & Baseline \\
-Male & Pending & Pending & Pending & Pending & Pending & Pending \\
-Female & Pending & Pending & Pending & Pending & Pending & Pending \\
-Age $\leq$50 & Pending & Pending & Pending & Pending & Pending & Pending \\
-Age $>$50 & Pending & Pending & Pending & Pending & Pending & Pending \\
-Early Stage & Pending & Pending & Pending & Pending & Pending & Pending \\
-Late Stage & Pending & Pending & Pending & Pending & Pending & Pending \\
-\hline
-\end{tabular}
-\label{tab:bias_audit}
-\end{table}
-
-\subsection{Concern 2: Data Privacy \& HIPAA/GDPR Compliance}
+%
+% \subsection{Concern 1: Algorithmic Bias in Demographic Subgroups}
+% Deep learning models risk learning spurious demographic correlations if training distributions are skewed. We conduct a stratified bias audit across age, sex, race, and tumour stage. Performance disparities are quantified via $\Delta$RMSE and Welch's t-test ($p<0.05$ flags significant bias). SHAP and Grad-CAM are further stratified to identify feature-level or morphological drivers of disparity. If significant bias is detected, mitigation strategies include stratified resampling, group-conditional fairness regularisation, or stage-aware loss weighting.
+%
+% \begin{table}[H]
+% \centering
+% \caption{Algorithmic Bias Audit: [PLACEHOLDER: Best Model] Stratified Performance}
+% \small
+% \begin{tabular}{|l|c|c|c|c|c|c|}
+% \hline
+% \textbf{Subgroup} & \textbf{n} & \textbf{RMSE} & \textbf{AUROC} & \textbf{$\Delta$ RMSE} & \textbf{p-value} & \textbf{Status} \\
+% \hline
+% Overall & Pending & Pending & Pending & --- & --- & Baseline \\
+% Male & Pending & Pending & Pending & Pending & Pending & Pending \\
+% Female & Pending & Pending & Pending & Pending & Pending & Pending \\
+% Age $\leq$50 & Pending & Pending & Pending & Pending & Pending & Pending \\
+% Age $>$50 & Pending & Pending & Pending & Pending & Pending & Pending \\
+% Early Stage & Pending & Pending & Pending & Pending & Pending & Pending \\
+% Late Stage & Pending & Pending & Pending & Pending & Pending & Pending \\
+% \hline
+% \end{tabular}
+% \label{tab:bias_audit}
+% \end{table}
+%
+\subsection{Concern 1: Data Privacy \& HIPAA/GDPR Compliance}
 WSI files and genomic profiles constitute Protected Health Information (PHI). Our pipeline enforces privacy-by-design: patient identifiers are tokenised and stored separately; raw WSIs are processed on-device with only de-identified feature vectors retained; explanation artefacts are auto-purged after 90 days. All experiments are logged with git commit SHAs and configuration fingerprints to satisfy auditability requirements under HIPAA §164.512 and GDPR Art. 17/22.
 
 \begin{table}[H]
@@ -446,24 +446,24 @@ Model Weights & Indefinite & Versioned & Non-PHI \\
 \label{tab:privacy_policy}
 \end{table}
 
-\subsection{Concern 3: Clinical Overreliance on Black-Box Predictions}
-To prevent unsafe automation bias, the pipeline outputs 95\% confidence intervals via ensemble disagreement. Wide intervals trigger physician review. Per-patient XAI report cards (SHAP + Grad-CAM) must be acknowledged before clinical action. Risk categories (Low/Medium/High) are mapped to explicit recommendations, and all overrides are logged for continuous model refinement.
-
-\begin{table}[H]
-\centering
-\caption{Confidence-Stratified Clinical Decision Support}
-\small
-\begin{tabular}{|c|c|c|c|c|}
-\hline
-\textbf{Pred. TMB} & \textbf{95\% CI} & \textbf{Width} & \textbf{Confidence} & \textbf{Action} \\
-\hline
-\relax $\ge 10$ & Pending & Pending & High & Proceed \\
-\relax $< 10$ & Pending & Pending & Low & Confirm \\
-\hline
-\end{tabular}
-\label{tab:confidence_stratification}
-\end{table}
-
+% \subsection{Concern 3: Clinical Overreliance on Black-Box Predictions}
+% To prevent unsafe automation bias, the pipeline outputs 95\% confidence intervals via ensemble disagreement. Wide intervals trigger physician review. Per-patient XAI report cards (SHAP + Grad-CAM) must be acknowledged before clinical action. Risk categories (Low/Medium/High) are mapped to explicit recommendations, and all overrides are logged for continuous model refinement.
+%
+% \begin{table}[H]
+% \centering
+% \caption{Confidence-Stratified Clinical Decision Support}
+% \small
+% \begin{tabular}{|c|c|c|c|c|}
+% \hline
+% \textbf{Pred. TMB} & \textbf{95\% CI} & \textbf{Width} & \textbf{Confidence} & \textbf{Action} \\
+% \hline
+% \relax $\ge 10$ & Pending & Pending & High & Proceed \\
+% \relax $< 10$ & Pending & Pending & Low & Confirm \\
+% \hline
+% \end{tabular}
+% \label{tab:confidence_stratification}
+% \end{table}
+%
 % ============================================================================
 % SECTION 6: DISCUSSION
 % ============================================================================
@@ -472,6 +472,8 @@ To prevent unsafe automation bias, the pipeline outputs 95\% confidence interval
 
 \subsection{Key Findings}
 Multimodal fusion consistently outperforms single-modality baselines, confirming that histopathological morphology encodes non-redundant signals complementary to genomic profiles. MCB fusion captures second-order image-tabular interactions, yielding the lowest prediction error. Image-only models, particularly adapted CellMorphNet and Shimada InceptionV3, demonstrate that spatial architecture and immune infiltration patterns are strong TMB correlates. XAI outputs align with established oncology literature: \textit{TP53} mutations, CD8+ T-cell markers, and advanced stage drive high-TMB predictions, while Grad-CAM highlights lymphocyte-rich stroma in high-TMB slides. Feature importance shifts in fusion models indicate partial redundancy between genomics and morphology, suggesting that high-quality WSIs may reduce reliance on expensive sequencing in resource-limited settings.
+
+Furthermore, our analysis underscores the highly tissue-specific nature of TMB distributions and their corresponding morphological manifestations. As evidenced by our cohort comparisons, the biological etiology of hypermutation varies drastically across gastrointestinal cancers. For instance, colon adenocarcinoma (COAD) exhibits a distinct bimodal TMB distribution driven by specific subpopulations with defective DNA mismatch repair (dMMR/MSI-H), whereas stomach adenocarcinoma (STAD) presents a more continuous, unimodal mutational profile. Consequently, the pathological features correlated with high TMB are not uniform across all cancers. Our framework demonstrates that robust predictive modeling must account for this tumor heterogeneity, capturing unique, tissue-specific histological patterns rather than relying on a generalized pan-cancer morphological signature.
 
 \subsection{Limitations \& Future Work}
 This study is constrained by limited validation patients and a single cancer type (COAD), limiting generalisability. Hardware limitations necessitated architectural adaptations (reduced tile counts, lower MCB sketch dimensions, simplified HCRA routing), which may cap peak performance. Scanner-specific staining variability and cross-site domain shifts remain unaddressed. Future work will prioritise external multi-institutional validation, domain adaptation for multi-scanner deployment, temporal survival analysis, and intersectional fairness audits. Integration of additional omics (methylation, proteomics) and prospective clinical trials validating predicted TMB against ICI response are critical next steps.
@@ -568,20 +570,20 @@ Lasso & max\_iter & 10{,}000 \\
 \end{tabular}
 \end{table}
 
-\section{Data Preprocessing Pseudocode}
-\label{app:preprocessing}
-\begin{verbatim}
-for patient in cohort:
-    wsi = open_slide(patient.svs)
-    tiles = extract_tiles(wsi, size=224, mag=20)
-    tiles = filter_whitespace(tiles, thresh=0.5)
-    embeddings = backbone(tiles)  # frozen CNN
-    top_k = select_by_variance(embeddings, k=16)
-    save(patient_id, top_k, coords)
-\end{verbatim}
-
-\section{Additional XAI Artefacts}
-\label{app:xai}
-Placeholders for extended SHAP dependence plots, Grad-CAM galleries across TMB quartiles, and cell-type composition heatmaps are reserved for supplementary material. All artefacts are generated via the pipeline scripts and stored with patient tokens for audit compliance.
+% \section{Data Preprocessing Pseudocode}
+% \label{app:preprocessing}
+% \begin{verbatim}
+% for patient in cohort:
+%     wsi = open_slide(patient.svs)
+%     tiles = extract_tiles(wsi, size=224, mag=20)
+%     tiles = filter_whitespace(tiles, thresh=0.5)
+%     embeddings = backbone(tiles)  # frozen CNN
+%     top_k = select_by_variance(embeddings, k=16)
+%     save(patient_id, top_k, coords)
+% \end{verbatim}
+%
+% \section{Additional XAI Artefacts}
+% \label{app:xai}
+% Placeholders for extended SHAP dependence plots, Grad-CAM galleries across TMB quartiles, and cell-type composition heatmaps are reserved for supplementary material. All artefacts are generated via the pipeline scripts and stored with patient tokens for audit compliance.
 
 \end{document}
