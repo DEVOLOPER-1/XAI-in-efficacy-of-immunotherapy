@@ -84,30 +84,67 @@ Ultimately, this work exceeds standard capstone expectations through: (1) \textb
 
 \subsection{Data Preprocessing \& Modalities}
 \label{subsec:data}
-Our cohort comprises stomach adenocarcinoma (STAD) patients with matched clinical records, RNA-seq expression matrices, and H\&E whole-slide images. Data alignment is performed via \texttt{PATIENT\_ID}, ensuring strict patient-level partitioning across train/validation/test splits. Missing modalities are handled via graceful degradation: image-only or tabular-only branches are activated when counterpart data is unavailable.
+Our cohort comprises colon adenocarcinoma (COAD) patients with matched clinical records, RNA-seq expression matrices, and H\&E whole-slide images. Data alignment is performed via \texttt{PATIENT\_ID}, ensuring strict patient-level partitioning across train/validation/test splits. To maintain architectural integrity and ensure fair performance evaluation across our advanced models, we enforce a strict multimodal inclusion criterion; patients lacking paired WSI and tabular records are systematically excluded from the final fusion cohort.
 
-\subsubsection{Tabular Data Engineering}
-Clinical features include age, sex, TNM stage, histological subtype, and treatment history. Genomic features comprise RNA-seq counts (quantified via RSEM/Salmon) and curated miRNA indicators. Missing continuous values are imputed via training-set mean; categorical missing values use mode imputation. Feature selection employs \texttt{SelectKBest} (F-regression) fitted exclusively on the training split to prevent data leakage. Final tabular dimensionality: 21 combined clinical and genomic features. All features are standardised using \texttt{StandardScaler} (fit on train, transform val/test).
+\subsubsection{Clinical Data Engineering}
+For baseline models incorporating patient demographics, clinical features include age, sex, TNM stage, histological subtype, and treatment history. Missing continuous values are imputed via training-set mean, while categorical missing values utilize mode imputation. All clinical features are subsequently standardized using \texttt{StandardScaler} (fitted exclusively on the training split and applied to validation/test sets to prevent data leakage).
+
+\subsubsection{Transcriptomic Data Engineering}
+Genomic features initially comprise raw RNA-seq counts. To address the highly skewed distribution of gene expression data and mitigate the impact of biological outliers, the features are processed through a dedicated pipeline comprising a Power Transformer followed by a Robust Scaler (fitted exclusively on the training split to prevent leakage). Dimensionality reduction is subsequently performed via Lasso regression to isolate the most prognostically relevant genetic markers—the exact methodology of which is detailed further in Section 3.2.1. This protocol reduces the high-dimensional transcriptome to a dense, finalized signature of 21 highly predictive mRNA features (mapped via Ensembl IDs), serving as the dedicated tabular input for the RNA expert network.
+\textbf{Selected Features (21-Gene Signature).} Feature selection for the COAD cohort yielded a condensed set of 21 highly prognostic mRNA markers (Gene Symbols), as identified via feature-engineering analysis (see \texttt{members/mourad/feature-engineering/2026-04-20\_feature-selection\_RNA.ipynb}):
+\begin{enumerate}
+\item \texttt{PTMAP4} (weight: 0.2548) — Universal anchor for genomic instability
+\item \texttt{MSH4} (0.0848)
+\item \texttt{MED31} (0.0761)
+\item \texttt{GNLY} (0.0718)
+\item \texttt{INSL4} (0.0662)
+\item \texttt{POU5F2} (0.0655)
+\item \texttt{CORT} (0.0468)
+\item \texttt{SLC25A11} (0.0362)
+\item \texttt{LINC00534} (0.0349)
+\item \texttt{TBR1} (0.0343)
+\item \texttt{TIMM22} (0.0328)
+\item \texttt{PDYN-AS1} (0.0324)
+\item \texttt{LINC01168} (0.0313)
+\item \texttt{RIMS2} (0.0303)
+\item \texttt{CTDNEP1} (0.0302)
+\item \texttt{PIAS2} (0.0290)
+\item \texttt{AC016705.1} (0.0268)
+\item \texttt{AC003043.2} (0.0193)
+\item \texttt{CATSPER3} (0.0173)
+\item \texttt{SEMG2} (0.0150)
+\item \texttt{PSMB6} (0.0122)
+\end{enumerate}
+
+\textbf{Clinical Interpretability.} The L1 sparsity constraint yields a subset of non-zero coefficients, each representing a direct linear relationship between a gene's expression level and predicted TMB. This coefficient-based explainability provides a stark contrast to black-box deep learning models, making Lasso ideally suited for: (1) generating clinical rule sets (e.g., ``if gene X $>$ threshold, then high TMB risk''); (2) direct integration with SHAP and LIME for per-patient explanations; and (3) validation against published oncology literature via gene-symbol annotation.
 
 \subsubsection{Image Data Engineering (WSI Preprocessing)}
 Raw Aperio SVS files ($\sim$500 MB--2 GB at 40$\times$) are processed as follows:
 \begin{enumerate}
-    \item \textbf{Tiling}: Non-overlapping 224$\times$224 patches extracted at 20$\times$ magnification.
-    \item \textbf{Whitespace Filtering}: Tiles with $>$50\% background pixels are discarded.
-    \item \textbf{Spatial Undersampling}: To respect GPU memory limits, we retain top-$K$ tiles per patient ranked by CNN feature variance, preserving tissue heterogeneity while reducing tile counts from $\sim$100k to 16--32 tiles.
-    \item \textbf{Feature Extraction}: Tiles are passed through a frozen GoogleNet or ResNet18 backbone (depending on the specific architecture) to yield embeddings.
-    \item \textbf{Output}: Per-patient bag of embeddings + spatial coordinates for attention/MIL aggregation.
+    \item \textbf{Tiling}: Non-overlapping 224$\times$224 patches are extracted at 20$\times$ magnification.
+    \item \textbf{Whitespace Filtering}: Tiles comprising $>$50\% background pixels are discarded to isolate tissue regions.
+    \item \textbf{Spatial Undersampling}: To respect GPU memory limits during training and spatial explainability generation, we retain the top-$K$ tiles per patient ranked by CNN feature variance. This preserves tissue heterogeneity while capping tile counts to a maximum of 16--32 tiles per patient.
+    \item \textbf{Feature Extraction}: Tiles are passed through a frozen convolutional backbone (e.g., GoogLeNet or ResNet18, depending on the specific architecture baseline) to yield high-dimensional embeddings.
+    \item \textbf{Output}: A per-patient bag of embeddings, accompanied by spatial coordinates for potential attention/MIL aggregation.
 \end{enumerate}
 
 \subsubsection{Modality Integration}
-Train/val/test splits are stratified by TMB quartiles to ensure balanced target distributions. Batch construction uses dynamic padding to accommodate variable tile counts per patient. All evaluation patients have complete multimodal data to ensure fair performance comparison across architectures.
+Train/validation/test splits are stratified by TMB quartiles to ensure balanced target distributions across all partitions. Batch construction utilizes dynamic padding to accommodate the variable tile counts (up to the 16--32 maximum) per patient. As mandated by our strict multimodal filtering, all patients in the evaluation phase possess complete, paired data arrays, enabling clean extraction of unimodal explainability artifacts.
 
 \subsection{Baseline Machine Learning Models}
 \label{subsec:baseline_ml}
 Four classical regressors establish tabular performance ceilings and serve as interpretability baselines.
 
 \subsubsection{Lasso Regression}
-Linear model with L1 penalty: $\min_{\beta} \frac{1}{2n}\|y - X\beta\|_2^2 + \alpha \|\beta\|_1$. Promotes sparsity for direct coefficient-based feature importance. Regularisation strength $\alpha=0.1$, max iterations 10{,}000, random coordinate selection. Top-256 features selected via \texttt{SelectKBest} before fitting.
+\label{subsubsec:lasso}
+
+\textbf{Rationale and Target Transformation.} Lasso Regression is a linear model formulated as:
+$$\min_{\beta} \frac{1}{2n}\|y - X\beta\|_2^2 + \alpha \|\beta\|_1$$
+where the L1 penalty ($\|\beta\|_1$) promotes coefficient sparsity, enabling direct interpretability of feature contributions. As a linear model, it cannot capture non-linear relationships between gene expression and TMB inherently. To improve predictions while maintaining interpretability, we apply a $\log(1+\text{TMB})$ transformation to the regression target prior to fitting. This transformation is mathematically justified for linear models because: (1) it stabilises the variance of TMB (heavy-tailed, ranging 0--433 Mut/Mb), reducing the influence of extreme outliers; (2) it maps the right-skewed TMB distribution onto a more symmetric range, violating fewer linear-model assumptions; and (3) after prediction, we inverse-transform via $\exp(\hat{y}) - 1$ to recover predictions in original Mut/Mb units.
+
+\textbf{Hyperparameters and Configuration.} Following the configuration in \texttt{configs/experiments/lasso\_regressor.yaml}, we employ: regularisation strength $\alpha=0.1$, max iterations 10{,}000, random coordinate selection (coordinate descent variant), and a tolerance of 0.01. Prior to Lasso fitting, the preprocessing pipeline applies a Power Transformer (Yeo-Johnson) followed by a Robust Scaler (fitted on training data only), ensuring stability with high-dimensional sparse genomics data. Top-256 features are selected via \texttt{SelectKBest} (univariate F-statistic ranking) before fitting the Lasso.
+
+\textbf{Implementation Details.} The Lasso model is instantiated via \texttt{src.models.tabular.LassoRegressor} and trained using scikit-learn's \texttt{Lasso} estimator wrapped in a sklearn \texttt{Pipeline} (PowerTransformer → RobustScaler → Lasso). The model is fit on the training split (stratified 70/30) containing 285 patients and evaluated on a held-out validation cohort of 121 patients. Risk stratification is performed at the threshold TMB $\geq 10$ Mut/Mb (high-risk class label = 1) to compute binary metrics (AUROC/AUPRC) alongside continuous regression metrics (RMSE, MAE, $R^2$, Pearson correlation, C-Index).
 
 \subsubsection{Decision Tree Regressor}
 Single CART tree. Split criterion: squared error. Random state: 42. Trained on top-256 selected features from the tabular RNA-seq + clinical matrix.
@@ -160,19 +197,19 @@ Table~\ref{tab:leaderboard} reports metrics from completed evaluation runs. Metr
 \small
 \begin{tabular}{|l|c|c|c|c|c|c|c|}
 \hline
-\textbf{Model} & \textbf{Cat.} & \textbf{RMSE} & \textbf{MAE} & \textbf{R$^2$} &
-\textbf{Pearson-r} & \textbf{C-Index} & \textbf{AUROC*} \\
+\textbf{Model} & \textbf{Cat.} & \textbf{AUROC*} & \textbf{R$^2$} &
+\textbf{RMSE} & \textbf{MAE} & \textbf{Pearson-r} & \textbf{C-Index} \\
 \hline
-Late Fusion & Fusion & 17.58 & 7.43 & 0.44 & 0.73 & 0.33 & 0.98 \\
-DNN Genetic (Tabular MLP) & Tabular & 16.53 & 8.73 & 0.43 & 0.68 & 0.35 & 0.97 \\
-Huang MMDL\textdagger{} & Fusion & 50.07 & 18.97 & $-$0.17 & $-$0.26 & 0.53 & 0.49 \\
-Shimada InceptionV3 & Image & 25.50 & 10.47 & $-$0.18 & $-$0.04 & 0.51 & 0.43 \\
-CellMorphNet & Image & 26.93 & 12.96 & $-$0.30 & 0.26 & 0.45 & 0.72 \\
+Late Fusion & Fusion & 0.98 & 0.44 & 17.58 & 7.43 & 0.73 & 0.33 \\
+DNN Genetic (Tabular MLP) & Tabular & 0.97 & 0.43 & 16.53 & 8.73 & 0.68 & 0.35 \\
+Lasso Regressor & Tabular & 0.79 & 0.61 & 0.69 & 0.50 & 0.79 & 0.28 \\
+CellMorphNet & Image & 0.72 & $-$0.30 & 26.93 & 12.96 & 0.26 & 0.45 \\
+Huang MMDL\textdagger{} & Fusion & 0.49 & $-$0.17 & 50.07 & 18.97 & $-$0.26 & 0.53 \\
+Shimada InceptionV3 & Image & 0.43 & $-$0.18 & 25.50 & 10.47 & $-$0.04 & 0.51 \\
 GoogleNet MIL & Image & \multicolumn{6}{c|}{[run pending]} \\
 Grad. Boosted Trees & Tabular & \multicolumn{6}{c|}{[run pending]} \\
 Random Forest & Tabular & \multicolumn{6}{c|}{[run pending]} \\
 Decision Tree & Tabular & \multicolumn{6}{c|}{[run pending]} \\
-Lasso Regressor & Tabular & \multicolumn{6}{c|}{[run pending]} \\
 \hline
 \multicolumn{8}{l}{\small * AUROC at TMB$\geq$10 Mut/Mb. RMSE/MAE in raw Mut/Mb. Note: models using $\log(1{+}$TMB) target} \\
 \multicolumn{8}{l}{\small report metrics after inverse transformation. High RMSE reflects the heavy-tailed TMB distribution.} \\
