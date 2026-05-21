@@ -159,8 +159,8 @@ Histogram-based \texttt{HistGradientBoostingRegressor} with native NaN handling.
 \label{subsec:cnn_wsi}
 \textit{Note: Full-scale replication of published WSI architectures was constrained by GPU memory and compute limits. We preserve core methodological innovations while adapting tile counts, attention routing, and precision formats. Exact hyperparameters are left as placeholders for experimental configuration.}
 
-\subsubsection{GoogleNet (Inception v1) for Multiple-Instance Learning}
-Pre-trained GoogleNet backbone extracts 1024-D tile features. An attention-weighted MIL pooling layer aggregates tile embeddings into a patient-level representation. Tile cap: 16 tiles/patient ($512\times512$ on disk, resized to $224\times224$). Batch size: 4. Optimiser: AdamW, LR=$1\times10^{-4}$, weight decay=$1\times10^{-4}$. Dropout: 0.3. Up to 100 epochs; risk threshold TMB$\geq$10 Mut/Mb.
+\subsubsection{GoogLeNet-based Attention-Based Multiple Instance Learning (ABMIL)}
+Our image expert utilizes a GoogLeNet (Inception v1) backbone, pre-trained on ImageNet, to extract 1024-dimensional feature embeddings from WSI patches. To facilitate domain adaptation to histopathological features, the backbone is initialized with pre-trained weights, followed by the fine-tuning of the terminal inception blocks (\textit{inception5a} and \textit{inception5b}). Tile-level representations are aggregated into a unified patient-level representation via an Attention-Based Multiple Instance Learning (ABMIL) pooling layer. This mechanism employs a non-linear attention gate (Linear $\rightarrow$ Tanh $\rightarrow$ Linear) to compute patch-specific importance scores, which are subsequently used to derive a weighted average of the patch embeddings. To accommodate variable tissue areas while respecting memory constraints, each patient is represented by a bag of up to 16--32 tiles (resized to 224$\times$224 pixels). The model is optimized using the AdamW optimizer (learning rate $1\times10^{-4}$, weight decay $1\times10^{-4}$) with a dropout rate of 0.3 applied to the regression head. The final architecture employs a non-linear regression head to predict continuous TMB values, trained over 100 epochs using the Huber loss function ($\delta=0.1$).
 
 \subsubsection{Shimada InceptionV3 WSI Replication (Adapted)}
 Based on Shimada et al. \cite{shimada2021}, we implement end-to-end fine-tuning of InceptionV3 (no frozen backbone) with gradient checkpointing to reduce peak VRAM. Native tile input: $299\times299$ px (InceptionV3 resolution); original paper used $360\times360$ at $20\times$. Tile cap: 32/patient; batch size: 32. Differential LR: backbone $1\times10^{-5}$ (factor 0.1), head $1\times10^{-4}$. Weight decay: $1\times10^{-4}$, gradient clipping: 1.0. Scheduler: ReduceLROnPlateau (patience=10, factor=0.5). Epochs: 100. Raw TMB target (no log1p).
@@ -202,11 +202,11 @@ Table~\ref{tab:leaderboard} reports metrics from completed evaluation runs. Metr
 \hline
 Late Fusion & Fusion & 0.98 & 0.44 & 17.58 & 7.43 & 0.73 & 0.33 \\
 DNN Genetic (Tabular MLP) & Tabular & 0.97 & 0.43 & 16.53 & 8.73 & 0.68 & 0.35 \\
-Lasso Regressor & Tabular & 0.79 & 0.61 & 0.69 & 0.50 & 0.79 & 0.28 \\
+Lasso Regressor\textdagger{} & Tabular & 0.79 & 0.61 & 0.69 & 0.50 & 0.79 & 0.28 \\
 CellMorphNet & Image & 0.72 & $-$0.30 & 26.93 & 12.96 & 0.26 & 0.45 \\
+GoogleNet MIL\textdagger{} & Image & 0.67 & $-$0.07 & 52.78 & 15.77 & 0.35 & 0.40 \\
 Huang MMDL\textdagger{} & Fusion & 0.49 & $-$0.17 & 50.07 & 18.97 & $-$0.26 & 0.53 \\
 Shimada InceptionV3 & Image & 0.43 & $-$0.18 & 25.50 & 10.47 & $-$0.04 & 0.51 \\
-GoogleNet MIL & Image & \multicolumn{6}{c|}{[run pending]} \\
 Grad. Boosted Trees & Tabular & \multicolumn{6}{c|}{[run pending]} \\
 Random Forest & Tabular & \multicolumn{6}{c|}{[run pending]} \\
 Decision Tree & Tabular & \multicolumn{6}{c|}{[run pending]} \\
