@@ -152,8 +152,18 @@ Single CART tree. Split criterion: squared error. Random state: 42. Trained on t
 \subsubsection{Random Forest Regressor}
 Bagged ensemble of 500 trees, criterion: absolute\_error, min\_samples\_split=40, min\_samples\_leaf=30, max\_depth=None (fully grown). Feature importance via Mean Decrease Impurity (MDI). Top-256 features selected prior to fitting (\texttt{select\_top\_k=256}).
 
-\subsubsection{Gradient Boosted Trees}
-Histogram-based \texttt{HistGradientBoostingRegressor} with native NaN handling. Trained on the same 21-feature tabular matrix used by the DNN baseline. Risk threshold: TMB$\geq$10 Mut/Mb for AUROC computation.
+\subsection{Transcriptomic Expert: Deep Neural Network (DNN)}
+To establish a robust transcriptomic baseline and serve as the RNA expert in our multimodal fusion pipeline, we implemented a Deep Neural Network (DNN) architecture inspired by recent continuous TMB prediction literature. The network processes the 21 finalized mRNA features (derived from our preprocessing and Lasso selection pipeline) through a series of dense hidden layers.
+
+The architecture consists of an input layer of 21 dimensions, mapped to a first hidden layer of 57 neurons, followed by a second hidden layer of 17 neurons, and concluding with a single-neuron linear output layer for continuous TMB regression. To enforce sparsity and prevent overfitting, each hidden layer utilizes a Rectified Linear Unit (ReLU) activation function followed by a substantial dropout rate of 0.4. The network is trained for 60 epochs using a batch size of 32. Optimization is performed via AdamW with a learning rate of $1\times 10^{-3}$ and a weight decay of $1\times 10^{-4}$. Unlike the visual expert initialization, this baseline targets the raw continuous TMB values (\texttt{log1p\_target=false}), relying on the upstream \texttt{PowerTransformer} (Yeo-Johnson) and \texttt{RobustScaler} to normalize the input domain rather than transforming the target space.
+
+\paragraph{Architectural Adaptations from the Hu et al. Baseline}
+While our DNN architecture draws direct inspiration from the framework proposed by Hu et al., we introduced several deliberate modifications to adapt the model for our specific multimodal COAD pipeline:
+\begin{enumerate}
+    \item \textbf{Dimensionality Reduction \& Input Size:} Hu et al. originally selected 31 genes, which were subsequently compressed into 10 dimensions using Principal Component Analysis (PCA) before entering the network. In contrast, our pipeline directly inputs the 21 genes selected via Lasso regression. We circumvent the need for PCA by applying a robust preprocessing step (Yeo-Johnson Power Transformation and Robust Scaling), which adequately stabilizes the highly skewed biological variance without obscuring individual gene importances during downstream XAI audits (e.g., SHAP).
+    \item \textbf{Static Architecture vs. Dynamic Genetic Algorithm:} The original study dynamically optimized hyperparameters (such as neuron counts) during training using a genetic algorithm. To maintain a deterministic and comparable baseline across our 9 distinct experiments, we bypassed the live genetic algorithm. Instead, we statically adopted the optimal architecture discovered by Hu et al.'s optimization process (57 neurons in the first hidden layer, 17 in the second) and paired it with a fixed dropout rate of 0.4.
+    \item \textbf{Cohort Specificity:} Whereas the original model was trained on a pan-gastrointestinal cohort (including STAD, READ, ESCA, and COAD), our implementation strictly isolates colon adenocarcinoma (COAD) to control for tissue-specific mutational profiles during spatial evaluation.
+\end{enumerate}
 
 \subsection{Convolutional Neural Networks for WSI}
 \label{subsec:cnn_wsi}
