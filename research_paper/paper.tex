@@ -250,9 +250,19 @@ Decision Tree & Tabular & \multicolumn{6}{c|}{[run pending]} \\
 \label{tab:leaderboard}
 \end{table}
 
-\subsection{Model Comparison: ROC Curve Framework}
-\label{subsec:roc}
-ROC curves stratified by model category (tabular-only, image-only, fusion) are reserved for the final submission once all model evaluation runs are complete. Based on the metrics in Table~\ref{tab:leaderboard}, the DNN Genetic model (AUROC=0.97) and Late Fusion model (AUROC=0.98) achieve strong high-risk stratification at TMB$\geq$10 Mut/Mb, while the Shimada InceptionV3 model (AUROC=0.43) and Huang MMDL (AUROC=0.49, val split) have not yet converged to clinically useful stratification.
+\subsection{Clinical Thresholding and AUROC Evaluation}
+\label{subsec:clinical_thresholding}
+
+While our primary objective is to predict continuous TMB values, the ultimate clinical utility of these predictions relies on accurate risk stratification. In current oncology practice, the FDA has established a tissue-agnostic threshold of $\geq$10 Mut/Mb to classify patients as TMB-High (TMB-H), identifying them as candidates for immune checkpoint inhibitor (ICI) therapies such as pembrolizumab. Consequently, evaluating our continuous regression models using the Area Under the Receiver Operating Characteristic curve (AUROC) at this specific threshold provides a critical measure of clinical viability. AUROC evaluates the model's capacity to correctly rank and separate patients across this strict decision boundary, offering a performance metric that remains robust despite the natural class imbalance inherent to TMB-H populations.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{explainability_outputs/TMB-EDA-comparison.png}
+    \caption{Violin plots illustrating the TMB distribution across COAD and STAD cohorts (log scale). The red dashed line denotes the clinical threshold of 10 Mut/Mb. COAD exhibits a distinct bimodal distribution, whereas STAD presents a more continuous, unimodal skew.}
+    \label{fig:tmb_distribution}
+\end{figure}
+
+The necessity of evaluating stratification performance at the 10 Mut/Mb threshold is further underscored by the underlying biological distribution of our specific dataset. As illustrated in Figure \ref{fig:tmb_distribution}, analyzing the TMB density on a logarithmic scale reveals stark morphological differences between cancer cohorts. Stomach adenocarcinoma (STAD) exhibits a continuous, unimodal distribution with a heavy right skew. In contrast, colon adenocarcinoma (COAD) demonstrates a distinctly bimodal distribution. This bimodality reflects two distinct biological subpopulations within colorectal cancers: a large cluster of microsatellite stable (MSS) patients with low mutational burdens, and a smaller, distinct peak of patients with defective DNA mismatch repair (dMMR/MSI-H) driving hypermutation. Because the 10 Mut/Mb clinical threshold naturally bisects these two biological clusters in COAD, converting our continuous predictions into binary classifications for AUROC evaluation provides the most accurate reflection of the models' potential real-world diagnostic power.
 
 \section{Explainability Results: Four XAI Techniques}
 \label{subsec:xai_results}
@@ -286,7 +296,7 @@ Figure~\ref{fig:xai_tabular} shows SHAP and LIME outputs from the DNN Genetic (T
 \end{subfigure}
 \begin{subfigure}{0.48\textwidth}
 \centering
-\includegraphics[width=\textwidth]{explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2684/tabular_lime.png}
+\includegraphics[width=\textwidth]{explainability_outputs/dnn_genetic_paper_architicture/tabular/TCGA-A6-2682/tabular_lime.png}
 \caption{LIME --- Patient TCGA-A6-2684}
 \end{subfigure}
 \caption{Additional per-patient tabular explanations (DNN Genetic model). Local SHAP and LIME show how individual feature values push predictions above or below the population mean.}
